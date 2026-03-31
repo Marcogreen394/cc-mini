@@ -7,11 +7,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
 _FALLBACK_MAX_TOKENS = 8192
 _MODEL_ALIASES = {
+    "claude-opus-4.6": "claude-opus-4-6",
     "claude-opus-4.1": "claude-opus-4-1",
     "claude-opus-4": "claude-opus-4",
+    "claude-sonnet-4.6": "claude-sonnet-4-6",
     "claude-sonnet-4": "claude-sonnet-4",
     "claude-3.7-sonnet": "claude-3-7-sonnet",
     "claude-3.5-sonnet": "claude-3-5-sonnet",
@@ -19,8 +25,10 @@ _MODEL_ALIASES = {
     "claude-3-haiku": "claude-3-haiku",
 }
 _MODEL_MAX_TOKENS = (
+    ("claude-opus-4-6", 32000),
     ("claude-opus-4-1", 32000),
     ("claude-opus-4", 32000),
+    ("claude-sonnet-4-6", 64000),
     ("claude-sonnet-4", 64000),
     ("claude-3-7-sonnet", 64000),
     ("claude-3-5-sonnet", 8192),

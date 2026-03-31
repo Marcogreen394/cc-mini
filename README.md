@@ -18,7 +18,7 @@ A minimal Python replica of [Claude Code](https://claude.ai/code) — a terminal
 ## Installation
 
 ```bash
-cd /path/to/mini-claude
+cd /path/to/cc-mini
 pip install -e ".[dev]"
 ```
 
