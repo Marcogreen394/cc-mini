@@ -1,5 +1,6 @@
 import pytest
 from mini_claude.tools.file_read import FileReadTool
+from mini_claude.tools.glob_tool import GlobTool
 
 
 @pytest.fixture
@@ -31,3 +32,30 @@ def test_file_read_missing_file():
 
 def test_file_read_is_read_only():
     assert FileReadTool().is_read_only() is True
+
+
+def test_glob_finds_files(tmp_path):
+    (tmp_path / "a.py").write_text("x")
+    (tmp_path / "b.py").write_text("x")
+    (tmp_path / "c.txt").write_text("x")
+
+    result = GlobTool().execute(pattern="*.py", path=str(tmp_path))
+    assert not result.is_error
+    assert "a.py" in result.content
+    assert "b.py" in result.content
+    assert "c.txt" not in result.content
+
+
+def test_glob_no_matches(tmp_path):
+    result = GlobTool().execute(pattern="*.xyz", path=str(tmp_path))
+    assert not result.is_error
+    assert "No files found" in result.content
+
+
+def test_glob_missing_dir():
+    result = GlobTool().execute(pattern="*.py", path="/no/such/dir")
+    assert result.is_error
+
+
+def test_glob_is_read_only():
+    assert GlobTool().is_read_only() is True
