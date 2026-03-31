@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import mimetypes
+import re
 import sys
 import time
 import threading
@@ -8,6 +11,7 @@ from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.live import Live
 from rich.spinner import Spinner
@@ -21,6 +25,7 @@ from .permissions import PermissionChecker
 from .tools.bash import BashTool
 from .tools.file_edit import FileEditTool
 from .tools.file_read import FileReadTool
+from .tools.file_write import FileWriteTool
 from .tools.glob_tool import GlobTool
 from .tools.grep_tool import GrepTool
 
@@ -35,12 +40,50 @@ def _tool_preview(tool_name: str, tool_input: dict) -> str:
     if tool_name == "Bash":
         cmd = tool_input.get("command", "")
         return cmd[:80] + ("…" if len(cmd) > 80 else "")
-    if tool_name in ("Read", "Edit"):
+    if tool_name in ("Read", "Edit", "Write"):
         fp = tool_input.get("file_path", "")
         return fp[-60:] if len(fp) > 60 else fp
     if tool_name in ("Glob", "Grep"):
         return tool_input.get("pattern", "")
     return ""
+
+
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+_IMG_PATH_RE = re.compile(r"@(\S+)")
+
+
+def _parse_input(text: str) -> str | list:
+    """Parse user input, extracting @path image references into content blocks.
+
+    Returns plain string if no images, or a list of content blocks if images found.
+    """
+    matches = list(_IMG_PATH_RE.finditer(text))
+    if not matches:
+        return text
+
+    image_blocks = []
+    for m in matches:
+        fpath = Path(m.group(1))
+        if not fpath.suffix.lower() in _IMAGE_EXTS:
+            continue
+        if not fpath.exists():
+            continue
+        media_type = mimetypes.guess_type(str(fpath))[0] or "image/png"
+        data = base64.standard_b64encode(fpath.read_bytes()).decode("ascii")
+        image_blocks.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": data},
+        })
+
+    if not image_blocks:
+        return text
+
+    # Remove @path tokens from text
+    cleaned = _IMG_PATH_RE.sub("", text).strip()
+    content: list[dict] = list(image_blocks)
+    if cleaned:
+        content.append({"type": "text", "text": cleaned})
+    return content
 
 
 class _SpinnerManager:
@@ -61,7 +104,6 @@ class _SpinnerManager:
             Spinner("dots", text=Text(self._spinner_text, style="dim")),
             console=self._console,
             refresh_per_second=12,
-            transient=True,  # spinner disappears when stopped
         )
         self._live.start()
 
@@ -74,33 +116,28 @@ class _SpinnerManager:
 
     def stop(self):
         if self._live is not None:
+            # Clear spinner line: update to empty then stop
+            self._live.update("")
             self._live.stop()
             self._live = None
 
 
-def run_query(engine: Engine, user_input: str, print_mode: bool,
+def run_query(engine: Engine, user_input: str | list, print_mode: bool,
               permissions: PermissionChecker | None = None) -> None:
     """Run a single turn. Ctrl+C or Esc cancels the active turn."""
-    # ESC listener calls engine.abort() directly to close the HTTP stream,
-    # matching claude-code-main's AbortController.abort() pattern.
     listener = EscListener(on_cancel=engine.abort)
     if permissions:
         permissions.set_esc_listener(listener)
 
     spinner = _SpinnerManager(console)
-    first_text = True  # track whether we've received the first text chunk
-
-    streaming = False  # True while text chunks are flowing
+    first_text = True
+    streaming = False
 
     try:
         with listener:
-            # Show spinner while waiting for first API response
-            # (background listener is active to detect ESC during blocking API call)
             spinner.start("Thinking…")
 
             for event in engine.submit(user_input):
-                # During streaming: main thread checks ESC non-blockingly
-                # (background listener is paused to avoid stealing keystrokes)
                 if streaming and listener.check_esc_nonblocking():
                     spinner.stop()
                     engine.cancel_turn()
@@ -110,8 +147,6 @@ def run_query(engine: Engine, user_input: str, print_mode: bool,
                 if event[0] == "text":
                     if first_text:
                         spinner.stop()
-                        # Pause background listener; main thread takes over
-                        # ESC detection via check_esc_nonblocking() above
                         listener.pause()
                         streaming = True
                         first_text = False
@@ -121,16 +156,12 @@ def run_query(engine: Engine, user_input: str, print_mode: bool,
                         console.print(event[1], end="", markup=False)
 
                 elif event[0] == "waiting":
-                    # Text streaming done, model generating tool_use input.
-                    # Main thread will block on get_final_message() →
-                    # resume background listener so ESC can abort the stream.
                     streaming = False
                     listener.resume()
                     spinner.start("Preparing tool call…")
 
                 elif event[0] == "tool_call":
                     spinner.stop()
-                    # Pause listener — permission prompt may need stdin
                     streaming = False
                     listener.pause()
                     _, tool_name, tool_input = event
@@ -143,18 +174,18 @@ def run_query(engine: Engine, user_input: str, print_mode: bool,
                     console.print(f"[dim]  {status} done[/dim]")
                     if result.is_error:
                         console.print(f"  [red]{result.content[:300]}[/red]")
-                    # Tool done → waiting for next API response.
-                    # Resume background listener for blocking API call.
                     streaming = False
                     listener.resume()
                     spinner.start("Thinking…")
                     first_text = True
 
+                elif event[0] == "error":
+                    spinner.stop()
+                    console.print(f"\n[bold red]{event[1]}[/bold red]")
+
             spinner.stop()
     except (AbortedError, KeyboardInterrupt):
         spinner.stop()
-        # AbortedError: ESC pressed → engine already called cancel_turn()
-        # KeyboardInterrupt: Ctrl+C → need to cancel manually
         if not isinstance(sys.exc_info()[1], AbortedError):
             engine.cancel_turn()
         console.print("\n[dim yellow]⏹ Turn cancelled[/dim yellow]")
@@ -189,7 +220,7 @@ def main() -> None:
     except ValueError as exc:
         parser.error(str(exc))
 
-    tools = [FileReadTool(), GlobTool(), GrepTool(), FileEditTool(), BashTool()]
+    tools = [FileReadTool(), GlobTool(), GrepTool(), FileEditTool(), FileWriteTool(), BashTool()]
     system_prompt = build_system_prompt()
     permissions = PermissionChecker(auto_approve=args.auto_approve)
     engine = Engine(
@@ -205,16 +236,26 @@ def main() -> None:
     # Non-interactive / piped
     if args.print or args.prompt:
         prompt_text = args.prompt or sys.stdin.read()
-        run_query(engine, prompt_text, print_mode=args.print, permissions=permissions)
+        run_query(engine, _parse_input(prompt_text), print_mode=args.print, permissions=permissions)
         return
 
     # Interactive REPL
-    # Match claude-code-main: Ctrl+C twice to exit, Esc/Ctrl+C to cancel turn
     config_note = f"[dim]{app_config.model} · max_tokens={app_config.max_tokens}[/dim]"
     console.print("[bold cyan]Mini Claude Code[/bold cyan]  "
                   f"{config_note}  "
-                  "[dim]Esc or Ctrl+C to cancel, Ctrl+C twice to exit[/dim]\n")
-    session: PromptSession = PromptSession(history=FileHistory(str(_HISTORY_FILE)))
+                  "[dim]Esc or Ctrl+C to cancel, Ctrl+C twice to exit[/dim]")
+    console.print('[dim]Enter to send, Alt+Enter for newline[/dim]\n')
+
+    kb = KeyBindings()
+
+    @kb.add("escape", "enter")
+    def _(event):
+        event.current_buffer.insert_text("\n")
+
+    session: PromptSession = PromptSession(
+        history=FileHistory(str(_HISTORY_FILE)),
+        key_bindings=kb,
+    )
 
     # Track last Ctrl+C time for double-press exit (matches useDoublePress)
     last_ctrlc_time = 0.0
@@ -223,8 +264,6 @@ def main() -> None:
         try:
             user_input = session.prompt("\n> ").strip()
         except KeyboardInterrupt:
-            # Match claude-code-main useExitOnCtrlCD + useDoublePress:
-            # idle state → first Ctrl+C shows hint, second within 800ms exits
             now = time.monotonic()
             if now - last_ctrlc_time <= _DOUBLE_PRESS_TIMEOUT_MS:
                 console.print("\n[dim]Goodbye.[/dim]")
@@ -245,7 +284,7 @@ def main() -> None:
             console.print("[dim]Goodbye.[/dim]")
             break
 
-        run_query(engine, user_input, print_mode=False, permissions=permissions)
+        run_query(engine, _parse_input(user_input), print_mode=False, permissions=permissions)
 
 
 if __name__ == "__main__":
