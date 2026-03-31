@@ -59,3 +59,34 @@ def test_glob_missing_dir():
 
 def test_glob_is_read_only():
     assert GlobTool().is_read_only() is True
+
+
+from mini_claude.tools.grep_tool import GrepTool
+
+
+def test_grep_finds_pattern(tmp_path):
+    (tmp_path / "a.py").write_text("def hello():\n    pass\n")
+    (tmp_path / "b.py").write_text("def world():\n    pass\n")
+
+    result = GrepTool().execute(pattern="hello", path=str(tmp_path))
+    assert not result.is_error
+    assert "a.py" in result.content
+    assert "b.py" not in result.content
+
+
+def test_grep_no_match(tmp_path):
+    (tmp_path / "a.py").write_text("nothing here\n")
+    result = GrepTool().execute(pattern="xyz123", path=str(tmp_path))
+    assert not result.is_error
+    assert "No matches" in result.content
+
+
+def test_grep_case_insensitive(tmp_path):
+    (tmp_path / "a.txt").write_text("Hello World\n")
+    result = GrepTool().execute(pattern="hello", path=str(tmp_path), **{"-i": True})
+    assert not result.is_error
+    assert "a.txt" in result.content
+
+
+def test_grep_is_read_only():
+    assert GrepTool().is_read_only() is True
