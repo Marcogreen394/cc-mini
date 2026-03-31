@@ -29,6 +29,8 @@ from .compact import CompactService, estimate_tokens, should_compact
 from .commands import parse_command, handle_command, CommandContext
 from ._keylistener import EscListener
 from .permissions import PermissionChecker
+from .sandbox.config import load_sandbox_config
+from .sandbox.manager import SandboxManager
 from .tools.bash import BashTool
 from .tools.file_edit import FileEditTool
 from .tools.file_read import FileReadTool
@@ -325,6 +327,10 @@ def main() -> None:
     except ValueError as exc:
         parser.error(str(exc))
 
+    # Sandbox initialization
+    sandbox_config = load_sandbox_config(app_config.config_paths)
+    sandbox_mgr = SandboxManager(config=sandbox_config)
+
     # Memory setup
     memory_dir = app_config.memory_dir
     ensure_memory_dir(memory_dir)
@@ -336,11 +342,18 @@ def main() -> None:
     discover_skills(cwd)
     skills_section = build_skills_prompt_section()
 
-    tools = [FileReadTool(), GlobTool(), GrepTool(), FileEditTool(), FileWriteTool(), BashTool()]
+    tools = [
+        FileReadTool(), GlobTool(), GrepTool(),
+        FileEditTool(), FileWriteTool(),
+        BashTool(sandbox_manager=sandbox_mgr),
+    ]
     system_prompt = build_system_prompt(memory_dir=memory_dir)
     if skills_section:
         system_prompt += "\n\n" + skills_section
-    permissions = PermissionChecker(auto_approve=args.auto_approve)
+    permissions = PermissionChecker(
+        auto_approve=args.auto_approve,
+        sandbox_manager=sandbox_mgr,
+    )
 
     # Session & compact services
     session_store: SessionStore | None = None
@@ -517,6 +530,9 @@ def main() -> None:
         if user_input.lower() in ("exit", "quit", "/exit", "/quit"):
             console.print("[dim]Goodbye.[/dim]")
             break
+        if user_input.startswith("/sandbox"):
+            _handle_sandbox_command(user_input, sandbox_mgr, console)
+            continue
 
         # Slash commands (session, compact, help, etc.)
         cmd = parse_command(user_input)
@@ -644,6 +660,87 @@ def main() -> None:
                 console.print("\n[dim]Auto-dream triggered (enough time + sessions since last consolidation)…[/dim]")
                 _run_dream(engine, memory_dir, permissions)
                 release_lock(memory_dir)
+
+
+def _handle_sandbox_command(
+    user_input: str, mgr: SandboxManager, con: Console
+) -> None:
+    """Handle /sandbox REPL command.
+
+    Corresponds to commands/sandbox-toggle/sandbox-toggle.tsx.
+
+    Sub-commands:
+    - /sandbox           -- interactive setup
+    - /sandbox status    -- show current status
+    - /sandbox exclude <pattern> -- add excluded command
+    - /sandbox mode <auto-allow|regular|disabled> -- set mode
+    """
+    parts = user_input.strip().split(maxsplit=2)
+    subcmd = parts[1] if len(parts) > 1 else ""
+
+    if subcmd == "status" or subcmd == "":
+        _show_sandbox_status(mgr, con)
+    elif subcmd == "exclude" and len(parts) > 2:
+        msg = mgr.add_excluded_command(parts[2])
+        mgr.save()
+        con.print(f"[green]{msg}[/green]")
+    elif subcmd == "mode" and len(parts) > 2:
+        msg = mgr.set_mode(parts[2])
+        mgr.save()
+        con.print(f"[green]{msg}[/green]")
+    else:
+        _interactive_sandbox_setup(mgr, con)
+
+
+def _show_sandbox_status(mgr: SandboxManager, con: Console) -> None:
+    """Display sandbox status. Corresponds to SandboxConfigTab + SandboxDependenciesTab."""
+    dep = mgr.check_dependencies()
+    mode = (
+        "auto-allow"
+        if mgr.is_auto_allow()
+        else ("regular" if mgr.config.enabled else "disabled")
+    )
+    con.print("[bold]Sandbox Status[/bold]")
+    con.print(f"  Mode: [cyan]{mode}[/cyan]")
+    con.print(f"  Enabled: {'yes' if mgr.is_enabled() else 'no'}")
+    con.print(
+        f"  Network isolation: {'yes' if mgr.config.unshare_net else 'no'}"
+    )
+    if dep.errors:
+        con.print("[bold red]Dependency errors:[/bold red]")
+        for e in dep.errors:
+            con.print(f"  [red]{e}[/red]")
+    if dep.warnings:
+        for w in dep.warnings:
+            con.print(f"  [yellow]{w}[/yellow]")
+    if mgr.config.excluded_commands:
+        con.print("[bold]Excluded commands:[/bold]")
+        for cmd in mgr.config.excluded_commands:
+            con.print(f"  - {cmd}")
+
+
+def _interactive_sandbox_setup(mgr: SandboxManager, con: Console) -> None:
+    """Interactive three-way mode selection. Corresponds to SandboxModeTab Select."""
+    dep = mgr.check_dependencies()
+    if dep.errors:
+        con.print("[bold red]Cannot enable sandbox:[/bold red]")
+        for e in dep.errors:
+            con.print(f"  [red]{e}[/red]")
+        return
+
+    con.print("[bold]Configure sandbox mode:[/bold]")
+    con.print("  [1] auto-allow -- bash commands auto-approved in sandbox")
+    con.print("  [2] regular    -- bash commands still need confirmation")
+    con.print("  [3] disabled   -- no sandbox")
+    choice = input("  Select [1/2/3]: ").strip()
+    mode_map = {"1": "auto-allow", "2": "regular", "3": "disabled"}
+    mode = mode_map.get(choice)
+    if mode:
+        msg = mgr.set_mode(mode)
+        mgr.save()
+        con.print(f"[green]{msg}[/green]")
+    else:
+        con.print("[dim]Cancelled[/dim]")
 
 
 if __name__ == "__main__":

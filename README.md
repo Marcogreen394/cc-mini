@@ -11,11 +11,13 @@ A lightweight Python implementation of [Claude Code](https://claude.ai/code) for
 - **Permission system** — reads auto-approved, writes/bash ask for confirmation
 - **Conversation management** — session persistence, context compression, resume
 - **Skill system** — built-in and custom SKILL.md-based reusable prompts
+- **Sandbox** — run bash commands in a bubblewrap (bwrap) sandbox for filesystem and network isolation
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.10+ (3.11+ recommended)
 - [Anthropic API key](https://console.anthropic.com/)
+- Linux with [bubblewrap](https://github.com/containers/bubblewrap) (`apt install bubblewrap`) for sandbox support (optional)
 
 ## Installation
 
@@ -433,6 +435,81 @@ cc-mini --dream-interval 0 --dream-min-sessions 1 --auto-approve
 
 Data is stored in `~/.mini-claude/` (memory in `memory/`, sessions in `sessions/`).
 
+## Sandbox
+
+The sandbox feature runs BashTool commands inside a [bubblewrap (bwrap)](https://github.com/containers/bubblewrap) sandbox on Linux, restricting filesystem writes and network access. This prevents accidental or malicious destructive operations.
+
+### How it works
+
+When sandbox is enabled, every Bash command is wrapped with bwrap:
+
+- The entire filesystem is mounted **read-only** (`--ro-bind / /`)
+- Only the current working directory is **writable** (`--bind $CWD $CWD`)
+- Network access is **isolated** by default (`--unshare-net`)
+- Configuration files (`.cc-mini.toml`, `CLAUDE.md`) are **protected** from modification
+- PID namespace is isolated (`--unshare-pid`)
+
+### Sandbox modes
+
+| Mode | Behavior |
+|------|----------|
+| `auto-allow` | Sandbox enabled, bash commands auto-approved (no permission prompt) |
+| `regular` | Sandbox enabled, bash commands still require confirmation |
+| `disabled` | No sandbox (default) |
+
+### Configure via REPL
+
+Use the `/sandbox` command in the interactive REPL:
+
+```
+> /sandbox                     # interactive mode selector
+> /sandbox status              # show current status and dependency check
+> /sandbox mode auto-allow     # enable sandbox with auto-allow
+> /sandbox mode regular        # enable sandbox with manual approval
+> /sandbox mode disabled       # disable sandbox
+> /sandbox exclude "docker *"  # skip sandbox for matching commands
+```
+
+### Configure via TOML
+
+Add a `[sandbox]` section to your config file (`.cc-mini.toml` or `~/.config/cc-mini/config.toml`):
+
+```toml
+[sandbox]
+enabled = true
+auto_allow_bash = true
+allow_unsandboxed = false
+excluded_commands = ["docker *", "npm run *"]
+unshare_net = true
+
+[sandbox.filesystem]
+allow_write = ["."]
+deny_write = []
+deny_read = []
+```
+
+### Excluded commands
+
+Some commands need to run outside the sandbox (e.g., Docker, package managers). Add patterns to `excluded_commands`:
+
+- **Exact**: `"git"` matches only `git`
+- **Prefix**: `"npm run"` matches `npm run test`, `npm run build`, etc.
+- **Wildcard**: `"docker *"` matches `docker build .`, `docker run ...`, etc.
+
+Excluded commands still require the normal permission prompt even in auto-allow mode.
+
+### Graceful degradation
+
+If bwrap is not installed or unavailable (non-Linux, Docker without user namespaces), sandbox is automatically disabled. Check with `/sandbox status`:
+
+```
+Sandbox Status
+  Mode: auto-allow
+  Enabled: no
+Dependency errors:
+  bubblewrap (bwrap) not found. Install: apt install bubblewrap
+```
+
 ## Project structure
 
 ```
@@ -447,8 +524,14 @@ src/core/
 ├── skills.py         # Skill loader, registry, and discovery
 ├── skills_bundled.py # Built-in skills (simplify, review, commit, test)
 ├── memory.py         # KAIROS memory system (logs, dream, sessions)
-├── permissions.py    # Permission checker
+├── permissions.py    # Permission checker + sandbox auto-allow
 ├── _keylistener.py   # Esc/Ctrl+C detection
+├── sandbox/          # Sandbox subsystem (bwrap isolation)
+│   ├── config.py         # SandboxConfig dataclass + TOML persistence
+│   ├── checker.py        # Dependency checking (bwrap, user namespaces)
+│   ├── command_matcher.py # Excluded command pattern matching
+│   ├── wrapper.py        # bwrap command line generator
+│   └── manager.py        # Unified sandbox manager interface
 ├── tools/
 │   ├── base.py       # Tool ABC + ToolResult
 │   ├── file_read.py
@@ -456,7 +539,7 @@ src/core/
 │   ├── file_write.py
 │   ├── glob_tool.py
 │   ├── grep_tool.py
-│   └── bash.py
+│   └── bash.py       # Bash tool with sandbox integration
 └── buddy/
     ├── types.py      # Data model: species, rarity, stats
     ├── companion.py  # Mulberry32 PRNG + deterministic generation
@@ -472,7 +555,14 @@ src/core/
 ## Running tests
 
 ```bash
+# All tests
 pytest tests/ -v
+
+# Sandbox tests only
+pytest tests/test_sandbox*.py -v
+
+# Skip integration tests that require bwrap
+pytest tests/ -v -k "not integration"
 ```
 
 ## Tips

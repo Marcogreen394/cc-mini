@@ -7,6 +7,7 @@ from .tools.base import Tool
 
 if TYPE_CHECKING:
     from ._keylistener import EscListener
+    from .sandbox.manager import SandboxManager
 
 PermissionBehavior = Literal["allow", "deny"]
 
@@ -14,10 +15,15 @@ PermissionBehavior = Literal["allow", "deny"]
 class PermissionChecker:
     """Read-only tools are auto-allowed. Bash/writes prompt the user (y/n/always)."""
 
-    def __init__(self, auto_approve: bool = False):
+    def __init__(
+        self,
+        auto_approve: bool = False,
+        sandbox_manager: SandboxManager | None = None,
+    ):
         self._auto_approve = auto_approve
         self._always_allow: set[str] = set()
         self._esc_listener: EscListener | None = None
+        self._sandbox = sandbox_manager
 
     def set_esc_listener(self, listener: EscListener | None):
         self._esc_listener = listener
@@ -29,6 +35,16 @@ class PermissionChecker:
             return "allow"
         if tool.name in self._always_allow:
             return "allow"
+
+        # Sandbox auto-allow: sandboxed Bash commands need no confirmation
+        if (
+            tool.name == "Bash"
+            and self._sandbox is not None
+            and self._sandbox.is_auto_allow()
+            and self._sandbox.should_sandbox(inputs.get("command", ""))
+        ):
+            return "allow"
+
         return self._prompt_user(tool, inputs)
 
     def _prompt_user(self, tool: Tool, inputs: dict) -> PermissionBehavior:

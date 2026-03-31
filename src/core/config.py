@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 import os
-import tomllib
+import sys
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib  # type: ignore[no-redef]
 from argparse import Namespace
 from dataclasses import dataclass
 from pathlib import Path
