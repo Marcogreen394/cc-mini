@@ -10,6 +10,8 @@ import threading
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.document import Document
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style as PTStyle
@@ -38,6 +40,51 @@ _HISTORY_FILE = Path.home() / ".cc_mini_history"
 
 # Match claude-code-main: useDoublePress DOUBLE_PRESS_TIMEOUT_MS = 800
 _DOUBLE_PRESS_TIMEOUT_MS = 0.8
+
+
+# ---------------------------------------------------------------------------
+# Slash command autocomplete — shows suggestions when user types "/"
+# Matches claude-code-main's commandSuggestions.ts behavior
+# ---------------------------------------------------------------------------
+
+class _SlashCommandCompleter(Completer):
+    """Autocomplete for slash commands. Triggers when input starts with "/"."""
+
+    # (name, description) — built-in + buddy
+    COMMANDS: list[tuple[str, str]] = [
+        ('help',    'Show available commands'),
+        ('compact', 'Compress conversation context'),
+        ('resume',  'Resume a past session'),
+        ('history', 'List saved sessions'),
+        ('clear',   'Clear conversation, start new session'),
+        ('buddy',   'Companion pet — hatch, pet, stats, mute/unmute'),
+        ('buddy pet',   'Pet your companion'),
+        ('buddy stats', 'Show companion stats'),
+        ('buddy mute',  'Mute companion reactions'),
+        ('buddy unmute', 'Unmute companion reactions'),
+        ('exit',    'Exit the REPL'),
+    ]
+
+    def get_completions(self, document: Document, complete_event):
+        text = document.text_before_cursor.lstrip()
+        if not text.startswith('/'):
+            return
+
+        # Strip the leading "/" for matching
+        query = text[1:].lower()
+
+        for name, desc in self.COMMANDS:
+            if not query or name.startswith(query):
+                # Calculate how many characters to replace
+                yield Completion(
+                    f'/{name}',
+                    start_position=-len(text),
+                    display=f'/{name}',
+                    display_meta=desc,
+                )
+
+
+_slash_completer = _SlashCommandCompleter()
 
 
 def _tool_preview(tool_name: str, tool_input: dict) -> str:
@@ -298,6 +345,8 @@ def main() -> None:
     session: PromptSession = PromptSession(
         history=FileHistory(str(_HISTORY_FILE)),
         key_bindings=kb,
+        completer=_slash_completer,
+        complete_while_typing=True,
     )
 
     # Track last Ctrl+C time for double-press exit (matches useDoublePress)
