@@ -9,6 +9,8 @@ A lightweight Python implementation of [Claude Code](https://claude.ai/code) for
 - **Agentic tool loop** — multiple tool calls per turn
 - **6 built-in tools**: file read, file edit, file write, glob, grep, bash
 - **Permission system** — reads auto-approved, writes/bash ask for confirmation
+- **Conversation management** — session persistence, context compression, resume
+- **Skill system** — built-in and custom SKILL.md-based reusable prompts
 
 ## Requirements
 
@@ -159,6 +161,200 @@ Permission required: Bash
 - `n` — deny
 - `a` — always allow this tool for the rest of the session
 
+## Conversation Management
+
+cc-mini automatically saves conversations and can compress long contexts to stay within token limits. Modelled after claude-code's session storage and compact system.
+
+### Session Persistence
+
+Every conversation is saved as a JSONL file under `~/.mini-claude/sessions/`. Messages are persisted incrementally — each message is appended as it happens, so nothing is lost even if the process crashes.
+
+```bash
+# Resume a previous session by index or ID
+cc-mini --resume 1
+
+# Or use slash commands inside the REPL
+> /history              # List saved sessions
+> /resume 2             # Resume session #2
+> /resume a3f2b         # Resume by session ID prefix
+```
+
+### Context Compression
+
+When conversations grow long, the context window fills up. cc-mini can compress older messages into a structured summary, keeping recent messages intact.
+
+```bash
+# Manual compact
+> /compact                          # Compress with default prompt
+> /compact focus on the auth work   # Compress with custom instructions
+
+# Auto-compact triggers automatically when token estimate exceeds 100k
+```
+
+How it works:
+1. Messages are split into **history** (to summarize) and **recent** (to keep)
+2. History is sent to the API with a structured summary prompt (Primary Request, Key Technical Concepts, Files and Code, Current Work, etc.)
+3. The summary replaces the old messages; recent messages are preserved intact
+4. Tool-use / tool-result pairs are never split across the boundary
+
+### Slash Commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show all available commands |
+| `/compact [instructions]` | Compress conversation context |
+| `/resume [number\|id]` | Resume a past session |
+| `/history` | List saved sessions for this directory |
+| `/clear` | Clear conversation, start a new session |
+| `/skills` | List all available skills |
+
+## Skills
+
+Skills are one-command workflows. Type `/name` and the AI runs a full sequence of steps for you — no need to explain what to do each time.
+
+### Built-in Skills
+
+| Command | What it does |
+|---------|-------------|
+| `/simplify` | Reviews your changed code for duplication, quality, and efficiency — **then fixes it** |
+| `/review` | Reviews code changes and reports issues — **read-only, no edits** |
+| `/commit` | Runs `git add`, generates a clean commit message, and commits |
+| `/test` | Detects the project's test framework, runs it, and analyzes failures |
+
+All skills accept optional arguments passed as extra instructions to the AI:
+
+```
+/simplify focus on security
+/review only check the API routes
+/commit fix login page styling
+/test only run test_auth.py
+```
+
+### Example
+
+```
+cc-mini
+
+> write a fibonacci function to fib.py
+
+↳ Write(fib.py) …
+  ✓ done
+Created fib.py with recursive and iterative implementations...
+
+> /review                          ← one-command review
+
+Running skill: /review…
+↳ Bash(git diff) …
+  ✓ done
+
+## Code Review Report
+### Warning
+- fib_recursive() does not handle negative input
+- Missing type annotations
+### Suggestion
+- Consider adding @functools.lru_cache
+
+> /simplify                        ← one-command fix
+
+Running skill: /simplify…
+↳ Bash(git diff) …  ✓ done
+↳ Read(fib.py) …    ✓ done
+↳ Edit(fib.py) …    ✓ done
+Fixed: added negative check, type annotations, lru_cache...
+
+> /test                            ← one-command test
+
+Running skill: /test…
+↳ Bash(python -m pytest tests/ -v) …
+  ✓ done
+All 3 tests passed ✓
+
+> /commit add fibonacci            ← one-command commit
+
+Running skill: /commit…
+↳ Bash(git add fib.py && git commit -m "feat: add fibonacci") …
+  ✓ done
+```
+
+### Custom Skills
+
+You can create your own skills for project-specific workflows.
+
+**Step 1**: Create a directory under `.cc-mini/skills/`
+
+```bash
+mkdir -p .cc-mini/skills/deploy
+```
+
+**Step 2**: Write a `SKILL.md` file
+
+```markdown
+---
+name: deploy
+description: Deploy to staging environment
+---
+
+# Deploy
+
+1. Run `git status` to check for uncommitted changes
+2. Run `./scripts/deploy.sh $ARGUMENTS`
+3. Report deployment status
+```
+
+`$ARGUMENTS` is replaced with whatever you type after the command. For example, `/deploy production` replaces `$ARGUMENTS` with `production`.
+
+**Step 3**: Use it
+
+```
+> /deploy staging
+Running skill: /deploy…
+```
+
+Skills auto-complete when you type `/`. Use `/skills` to see everything available:
+
+```
+> /skills
+┌──────────────┬─────────┬──────────────────────────┐
+│ Command      │ Source  │ Description              │
+├──────────────┼─────────┼──────────────────────────┤
+│ /simplify    │ bundled │ Review and fix code       │
+│ /review      │ bundled │ Review code (read-only)   │
+│ /commit      │ bundled │ Generate commit and push  │
+│ /test        │ bundled │ Run tests and analyze     │
+│ /deploy      │ project │ Deploy to staging         │
+└──────────────┴─────────┴──────────────────────────┘
+```
+
+### Where skills are discovered
+
+cc-mini looks for skills in these locations (in order):
+
+| Location | Scope |
+|----------|-------|
+| Built-in | 4 bundled skills, always available |
+| `~/.cc-mini/skills/` | Personal skills, available in all projects |
+| `<project>/.cc-mini/skills/` | Project skills, commit to git and share with your team |
+
+### Advanced: SKILL.md options
+
+The `---` block at the top of a SKILL.md (YAML frontmatter) supports these fields:
+
+```markdown
+---
+name: deploy                    # Skill name (defaults to folder name)
+description: Deploy to staging  # Short description
+context: fork                   # fork = runs in isolation, won't affect
+                                #   your current conversation
+                                # inline = injected into conversation (default)
+allowed-tools: Bash, Read       # Restrict which tools the skill can use
+arguments: target               # Argument hint shown in /skills list
+---
+
+Your prompt goes here...
+Use $ARGUMENTS for user-provided arguments.
+Use ${CLAUDE_SKILL_DIR} for the skill's directory path.
+```
+
 ## Buddy — AI Companion Pet
 
 cc-mini includes **Buddy**, a Tamagotchi-style AI companion that lives in your terminal. Each user gets a unique pet determined by a seeded PRNG — same user always gets the same species, rarity, and stats.
@@ -241,18 +437,20 @@ Data is stored in `~/.mini-claude/` (memory in `memory/`, sessions in `sessions/
 
 ```
 src/core/
-├── main.py         # CLI entry point + REPL
-├── engine.py       # Streaming API loop + tool execution
-├── context.py      # System prompt builder (git status, date, memory)
-├── config.py       # Configuration (CLI, env, TOML)
-├── memory.py       # KAIROS memory system (logs, dream, sessions)
-├── commands.py     # Slash command system
-├── compact.py      # Context window compaction
-├── session.py      # Session persistence (JSONL)
-├── permissions.py  # Permission checker
-├── _keylistener.py # Esc/Ctrl+C detection
+├── main.py           # CLI entry point + REPL
+├── engine.py         # Streaming API loop + tool execution
+├── context.py        # System prompt builder (git status, date, memory)
+├── config.py         # Configuration (CLI, env, TOML)
+├── commands.py       # Slash command system + skill dispatch
+├── session.py        # Session persistence (JSONL)
+├── compact.py        # Context window compaction
+├── skills.py         # Skill loader, registry, and discovery
+├── skills_bundled.py # Built-in skills (simplify, review, commit, test)
+├── memory.py         # KAIROS memory system (logs, dream, sessions)
+├── permissions.py    # Permission checker
+├── _keylistener.py   # Esc/Ctrl+C detection
 ├── tools/
-│   ├── base.py     # Tool ABC + ToolResult
+│   ├── base.py       # Tool ABC + ToolResult
 │   ├── file_read.py
 │   ├── file_edit.py
 │   ├── file_write.py
@@ -282,5 +480,8 @@ pytest tests/ -v
 - Place a `CLAUDE.md` file in your project root — it will be included in the system prompt automatically
 - Use `--auto-approve` when running non-interactively or for trusted tasks
 - Use `/history` to list past sessions, `/resume` to continue one
+- Use `/simplify` after making changes to auto-review and clean up code
+- Create project-specific skills in `.cc-mini/skills/` for repeatable workflows
+- Conversations auto-compact when approaching 100k tokens; use `/compact` to trigger manually
 - Memories persist across sessions in `~/.mini-claude/memory/`; run `/dream` to consolidate
 - Type `/buddy` to hatch your AI companion — it watches your coding sessions and comments from the sideline

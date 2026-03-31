@@ -45,6 +45,8 @@ from .memory import (
     release_lock,
     record_consolidation,
 )
+from .skills import discover_skills, list_skills, build_skills_prompt_section
+from .skills_bundled import register_bundled_skills
 
 console = Console()
 _HISTORY_FILE = Path.home() / ".cc_mini_history"
@@ -62,12 +64,13 @@ class _SlashCommandCompleter(Completer):
     """Autocomplete for slash commands. Triggers when input starts with "/"."""
 
     # (name, description) — built-in + buddy
-    COMMANDS: list[tuple[str, str]] = [
+    BUILTIN_COMMANDS: list[tuple[str, str]] = [
         ('help',    'Show available commands'),
         ('compact', 'Compress conversation context'),
         ('resume',  'Resume a past session'),
         ('history', 'List saved sessions'),
         ('clear',   'Clear conversation, start new session'),
+        ('skills',  'List all available skills'),
         ('buddy',   'Companion pet — hatch, pet, stats, mute/unmute'),
         ('buddy pet',   'Pet your companion'),
         ('buddy stats', 'Show companion stats'),
@@ -81,18 +84,34 @@ class _SlashCommandCompleter(Completer):
         if not text.startswith('/'):
             return
 
-        # Strip the leading "/" for matching
         query = text[1:].lower()
 
-        for name, desc in self.COMMANDS:
+        # Built-in commands
+        for name, desc in self.BUILTIN_COMMANDS:
             if not query or name.startswith(query):
-                # Calculate how many characters to replace
                 yield Completion(
                     f'/{name}',
                     start_position=-len(text),
                     display=f'/{name}',
                     display_meta=desc,
                 )
+
+        # Dynamic skill commands
+        try:
+            from .skills import list_skills
+            for skill in list_skills(user_invocable_only=True):
+                # Skip if already covered by built-in commands
+                if any(name == skill.name for name, _ in self.BUILTIN_COMMANDS):
+                    continue
+                if not query or skill.name.startswith(query):
+                    yield Completion(
+                        f'/{skill.name}',
+                        start_position=-len(text),
+                        display=f'/{skill.name}',
+                        display_meta=skill.description[:40] if skill.description else 'skill',
+                    )
+        except Exception:
+            pass
 
 
 _slash_completer = _SlashCommandCompleter()
@@ -311,11 +330,17 @@ def main() -> None:
     ensure_memory_dir(memory_dir)
     session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
 
+    # Skill setup — register bundled + discover project/user skills
+    register_bundled_skills()
+    cwd = str(Path.cwd())
+    discover_skills(cwd)
+    skills_section = build_skills_prompt_section()
+
     tools = [FileReadTool(), GlobTool(), GrepTool(), FileEditTool(), FileWriteTool(), BashTool()]
     system_prompt = build_system_prompt(memory_dir=memory_dir)
+    if skills_section:
+        system_prompt += "\n\n" + skills_section
     permissions = PermissionChecker(auto_approve=args.auto_approve)
-
-    cwd = str(Path.cwd())
 
     # Session & compact services
     session_store: SessionStore | None = None

@@ -248,6 +248,25 @@ def _cmd_dream(ctx: CommandContext, args: str) -> None:
     ctx.run_dream()
 
 
+def _cmd_skills(ctx: CommandContext, args: str) -> None:
+    """List all available skills."""
+    from .skills import list_skills
+
+    skills = list_skills(user_invocable_only=True)
+    if not skills:
+        ctx.console.print("[dim]No skills available.[/dim]")
+        return
+
+    table = Table(title="Available Skills", show_header=True, header_style="bold cyan")
+    table.add_column("Command", style="green")
+    table.add_column("Source", style="dim", width=8)
+    table.add_column("Description")
+    for s in skills:
+        hint = f" [{s.argument_hint}]" if s.argument_hint else ""
+        table.add_row(f"/{s.name}{hint}", s.source, s.description)
+    ctx.console.print(table)
+
+
 # ---------------------------------------------------------------------------
 # Command registry
 # ---------------------------------------------------------------------------
@@ -262,16 +281,64 @@ _COMMAND_TABLE: list[tuple[str, str, object]] = [
     ("memory",   "Show current memory index",                       _cmd_memory),
     ("remember", "Save a note to the daily log [text]",             _cmd_remember),
     ("dream",    "Consolidate daily logs into topic files",          _cmd_dream),
+    ("skills",   "List all available skills",                       _cmd_skills),
 ]
 
 _HANDLERS: dict[str, object] = {name: handler for name, _, handler in _COMMAND_TABLE}
 
 
 def handle_command(name: str, args: str, ctx: CommandContext) -> bool:
-    """Dispatch slash command. Returns True if handled, False otherwise."""
+    """Dispatch slash command. Returns True if handled, False otherwise.
+
+    If *name* does not match a built-in command, checks the skill registry
+    and executes the skill inline (prompt injection) or forked (isolated turn).
+    """
     handler = _HANDLERS.get(name)
-    if handler is None:
-        ctx.console.print(f"[red]Unknown command: /{name}[/red]  (try /help)")
-        return False
-    handler(ctx, args)  # type: ignore[operator]
+    if handler is not None:
+        handler(ctx, args)  # type: ignore[operator]
+        return True
+
+    # Try as a skill invocation
+    from .skills import get_skill
+    skill = get_skill(name)
+    if skill is not None:
+        return _execute_skill(skill, args, ctx)
+
+    ctx.console.print(f"[red]Unknown command: /{name}[/red]  (try /help or /skills)")
+    return False
+
+
+def _execute_skill(skill, args: str, ctx: CommandContext) -> bool:
+    """Execute a skill — inline or forked.
+
+    Inline (default): inject the skill prompt as a user message into the
+    current conversation and let the engine process it.
+
+    Forked: run the skill in an isolated turn (save messages, clear, run,
+    restore original messages).  Matches claude-code's ``context: 'fork'``.
+    """
+    from .main import run_query
+
+    prompt = skill.get_prompt(args)
+    if not prompt:
+        ctx.console.print(f"[dim]Skill /{skill.name} produced no prompt.[/dim]")
+        return True
+
+    ctx.console.print(f"[dim]Running skill: /{skill.name}…[/dim]")
+
+    if skill.context == "fork":
+        # Forked execution: isolated turn
+        saved = list(ctx.engine.get_messages())
+        ctx.engine.set_messages([])
+        try:
+            permissions = ctx.permissions
+            run_query(ctx.engine, prompt, print_mode=False, permissions=permissions)
+        finally:
+            # Restore original messages (forked result is ephemeral)
+            ctx.engine.set_messages(saved)
+    else:
+        # Inline execution: inject prompt into ongoing conversation
+        permissions = ctx.permissions
+        run_query(ctx.engine, prompt, print_mode=False, permissions=permissions)
+
     return True
