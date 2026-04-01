@@ -55,7 +55,7 @@ class PermissionChecker:
             val = str(v)[:200] + ("..." if len(str(v)) > 200 else "")
             console.print(f"  [dim]{k}:[/dim] {val}")
 
-        console.print("\n  Allow? [y]es / [n]o / [a]lways: ", end="")
+        console.print("\n  Allow? \\[y]es / \\[n]o / \\[a]lways: ", end="")
 
         # Pause the ESC listener so it doesn't steal our keystrokes
         if self._esc_listener:
