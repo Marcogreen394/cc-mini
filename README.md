@@ -13,730 +13,142 @@ The entire core is `~1000 lines of Python`
 
 ---
 
+### **NEW: Buddy — AI Companion with Custom Sprites**
+
+> Your coding companion lives in the terminal. Type `/buddy` to hatch it. Supports custom ASCII species — bring your own Pikachu!
+
+![Custom Pikachu buddy companion](assets/buddy-pikachu.jpg)
+
+[Full Buddy docs &rarr;](docs/buddy.md)
+
+---
+
 ## Features
 
-### Advanced Features
+### Core
 
-> These features exist in the official Claude Code codebase but have not been fully released by Anthropic. cc-mini has implemented and ships them.
-
-| Feature | What it does |
-|---------|--------------|
-| [**Coordinator Mode**](#coordinator-mode) | Runs the assistant as a coordinator that can launch background workers, continue them later, and synthesize their results |
-| [**Buddy**](#buddy--ai-companion) | Tamagotchi-style AI companion pet — watches your sessions, comments in a speech bubble, has persistent personality and stats |
-| [**KAIROS**](#kairos--memory-system) | Cross-session memory system — save notes, auto-consolidates logs into topic files over time |
-| [**Sandbox**](#sandbox) | Runs bash commands inside bubblewrap (bwrap) isolation — filesystem writes and network access restricted |
-
-### Basic Features
-
-- **Interactive REPL** — command history, keyboard shortcuts, streaming output as text is generated
-- **Agentic tool loop** — Claude autonomously calls multiple tools per turn until the task is complete
+- **Interactive REPL** with streaming output, command history, slash command autocomplete
+- **Agentic tool loop** — Claude calls tools autonomously until the task is complete
 - **6 built-in tools**: `Read`, `Edit`, `Write`, `Glob`, `Grep`, `Bash`
-- **Permission system** — reads auto-approved; writes and bash commands ask for confirmation
-- **Conversation management** — session persistence, context compression, and resume support
-- **Coordinator mode** — optional orchestration mode with background workers for parallel research, implementation, and verification
-- **Skills** — reusable one-command workflows via `SKILL.md` files, built-in and custom
+- **Permission system** — reads auto-approved, writes/bash ask for confirmation
+- **Session persistence** — auto-save conversations, `/resume` to continue later
+- **Context compression** — auto-compact when approaching token limits
+- **Anthropic + OpenAI compatible** — works with any compatible API endpoint
+
+### Advanced (from unreleased Claude Code features)
+
+| Feature | Description | Docs |
+|---------|-------------|------|
+| **Coordinator Mode** | Background workers for parallel research and implementation | [docs &rarr;](docs/coordinator.md) |
+| **Buddy** | Tamagotchi AI pet with personality, stats, and speech bubbles | [docs &rarr;](docs/buddy.md) |
+| **KAIROS Memory** | Cross-session memory with auto-consolidation | [docs &rarr;](docs/memory.md) |
+| **Skills** | One-command workflows: `/review`, `/commit`, `/test`, `/simplify` | [docs &rarr;](docs/skills.md) |
+| **Sandbox** | Bubblewrap isolation for bash commands | [docs &rarr;](docs/sandbox.md) |
 
 ---
 
-## Requirements
+## Quick Start
+
+### Requirements
 
 - Python 3.10+ (3.11+ recommended)
-- Anthropic-compatible or OpenAI-compatible API access
-- Linux with [bubblewrap](https://github.com/containers/bubblewrap) (`apt install bubblewrap`) — only for sandbox support (optional)
+- An API key for [Anthropic](https://console.anthropic.com/) or any OpenAI-compatible provider
 
----
-
-## Installation
-
-### One-line install (recommended)
+### Install
 
 ```bash
+# One-line install (recommended)
 curl -fsSL https://raw.githubusercontent.com/e10nMa2k/cc-mini/main/install.sh | bash
-```
 
-Clones the repo to `~/.cc-mini`, creates an isolated venv, and places a `cc-mini` launcher in `~/.local/bin`. No `sudo` required.
-
-**Options** (set as env vars before the command):
-
-| Variable | Default | Description |
-|---|---|---|
-| `CC_MINI_INSTALL_DIR` | `~/.cc-mini` | Where to clone the repo |
-| `CC_MINI_BIN_DIR` | `~/.local/bin` | Where to put the `cc-mini` launcher |
-| `CC_MINI_BRANCH` | `main` | Git branch to install |
-
-Example with custom dir:
-
-```bash
-CC_MINI_INSTALL_DIR=~/tools/cc-mini curl -fsSL https://raw.githubusercontent.com/e10nMa2k/cc-mini/main/install.sh | bash
-```
-
-To update, just re-run the same command.
-
-### Manual install (from source)
-
-```bash
+# Or manual
 git clone https://github.com/e10nMa2k/cc-mini.git
 cd cc-mini
 pip install -e ".[dev]"
 ```
 
----
-
-## Usage
-
-### Set API key
-
-Anthropic-compatible setup:
+### Set API Key
 
 ```bash
+# Anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
-```
 
-Custom API base URL (useful for proxies or compatible endpoints):
-
-```bash
-export ANTHROPIC_BASE_URL=https://your-gateway.example.com
-```
-
-OpenAI-compatible setup:
-
-```bash
+# Or OpenAI-compatible
 export CC_MINI_PROVIDER=openai
 export OPENAI_API_KEY=sk-...
-export OPENAI_BASE_URL=https://your-openai-gateway.example.com
+export OPENAI_BASE_URL=https://your-gateway.example.com/v1
 ```
 
-Optional environment variables for runtime defaults:
+### Run
 
 ```bash
-export CC_MINI_MODEL=claude-sonnet-4-5
-export CC_MINI_MAX_TOKENS=64000
-export CC_MINI_EFFORT=medium
-export CC_MINI_BUDDY_MODEL=claude-haiku-4-5-20251001
+cc-mini                              # Interactive REPL
+cc-mini "what tests exist?"          # One-shot prompt
+cc-mini -p "summarize this codebase" # Print and exit
+cc-mini --auto-approve               # Skip permission prompts
+cc-mini --resume 1                   # Resume previous session
+cc-mini --coordinator                # Coordinator mode
 ```
 
-### Interactive REPL
+### First Session Demo
 
-```bash
+```
 cc-mini
-```
-
-```
-cc-mini  type 'exit' or Ctrl+C to quit
 
 > list all python files in this project
 ↳ Glob(**/*.py) ✓
-Here are all the .py files...
+Found 12 Python files...
 
-> read engine.py and explain how the tool loop works
+> read engine.py and explain the tool loop
 ↳ Read(src/core/engine.py) ✓
 The submit() method implements an agentic loop...
+
+> /buddy
+Hatching your companion...
+✨ SHINY LEGENDARY DUCK
+Glitch Quack hatched! ★★★★★
+
+> /review
+Running skill: /review…
+↳ Bash(git diff) … ✓ done
+## Code Review: no issues found ✓
 ```
 
-Type `exit` or press `Ctrl+C` to quit.
-
-### Coordinator mode
-
-Launch cc-mini in coordinator mode:
-
-```bash
-cc-mini --coordinator
-```
-
-Or enable it via environment variable:
-
-```bash
-export CC_MINI_COORDINATOR=1
-cc-mini
-```
-
-In coordinator mode, the assistant can use background workers through the `Agent`, `SendMessage`, and `TaskStop` tools. Worker results are delivered back into the main conversation as internal `<task-notification>` messages, so interactive mode is the best fit.
-
-### One-shot prompt
-
-```bash
-cc-mini "what tests exist in this project?"
-```
-
-### Non-interactive / scripted mode
-
-Use `-p` to print the response and exit:
-
-```bash
-cc-mini -p "summarize this codebase in 3 bullets"
-```
-
-Pipe input:
-
-```bash
-echo "what does engine.py do?" | cc-mini -p
-```
-
-### Auto-approve permissions
-
-Skip permission prompts for all tools (use with care):
-
-```bash
-cc-mini --auto-approve
-```
-
-### Configure API endpoint and model
-
-```bash
-cc-mini \
-  --provider anthropic \
-  --base-url https://your-gateway.example.com \
-  --api-key sk-ant-... \
-  --model claude-sonnet-4
-```
-
-`max_tokens` follows the selected model by default. Override when needed:
-
-```bash
-cc-mini --model claude-3-5-haiku --max-tokens 2048
-```
-
-OpenAI-compatible example:
-
-```bash
-cc-mini \
-  --provider openai \
-  --base-url https://your-openai-gateway.example.com/v1 \
-  --api-key sk-... \
-  --model gpt-4.1-mini \
-  --effort medium
-```
-
-For quick testing, you can also use an OpenAI-compatible gateway such as OpenRouter with a free model:
-
-```bash
-cc-mini \
-  --provider openai \
-  --base-url https://openrouter.ai/api/v1 \
-  --api-key sk-or-... \
-  --model qwen/qwen3.6-plus-preview:free
-```
-
-### Configure with a TOML file
-
-Config files are loaded in order (later overrides earlier):
-
-1. `~/.config/cc-mini/config.toml`
-2. `.cc-mini.toml` in the current working directory
-
-Point to a specific file with `--config`.
-
-```toml
-provider = "anthropic"  # or "openai"
-
-[anthropic]
-api_key = "sk-ant-..."
-base_url = "https://your-gateway.example.com"
-model = "claude-sonnet-4"
-
-[openai]
-api_key = "sk-..."
-base_url = "https://your-openai-gateway.example.com/v1"
-model = "gpt-4.1-mini"
-max_tokens = 8192
-effort = "medium"
-buddy_model = "gpt-4.1-mini"
-```
-
-OpenRouter example for low-cost testing:
-
-```toml
-provider = "openai"
-
-[openai]
-api_key = "sk-or-..."
-base_url = "https://openrouter.ai/api/v1"
-model = "qwen/qwen3.6-plus-preview:free"
-```
-
-Top-level keys are also supported and override the selected provider section when present.
-
-When `provider = "openai"`, `OPENAI_API_KEY` / `OPENAI_BASE_URL` are used. When `provider = "anthropic"`, `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` are used. If `buddy_model` is omitted, Anthropic defaults to Haiku for companion side-features; OpenAI defaults to the main model so companion features do not break on unknown model names.
+[Full configuration docs &rarr;](docs/configuration.md)
 
 ---
 
 ## Tools
 
-| Tool | Name | Permission |
-|------|------|------------|
-| Read file | `Read` | auto-approved |
-| Find files | `Glob` | auto-approved |
-| Search content | `Grep` | auto-approved |
-| Edit file | `Edit` | requires confirmation |
-| Write file | `Write` | requires confirmation |
-| Run command | `Bash` | requires confirmation |
-| Spawn background worker (coordinator mode) | `Agent` | requires confirmation |
-| Continue background worker (coordinator mode) | `SendMessage` | requires confirmation |
-| Stop background worker (coordinator mode) | `TaskStop` | requires confirmation |
+| Tool | Description | Permission |
+|------|-------------|------------|
+| `Read` | Read file contents | auto-approved |
+| `Glob` | Find files by pattern | auto-approved |
+| `Grep` | Search file contents | auto-approved |
+| `Edit` | Edit file (string replacement) | requires confirmation |
+| `Write` | Write/create file | requires confirmation |
+| `Bash` | Run shell command | requires confirmation |
 
-### Permission prompt
-
-When the assistant wants to run a write or bash tool:
-
-```
-Permission required: Bash
-  command: pytest tests/ -v
-
-  Allow? [y]es / [n]o / [a]lways:
-```
-
-- `y` — allow once
-- `n` — deny
-- `a` — always allow this tool for the rest of the session
+Coordinator mode adds: `Agent` (spawn worker), `SendMessage` (continue worker), `TaskStop` (stop worker). See [coordinator docs](docs/coordinator.md).
 
 ---
 
-## Conversation Management
-
-cc-mini automatically saves conversations and can compress long contexts to stay within token limits.
-
-### Session Persistence
-
-Every conversation is saved as a JSONL file under `~/.mini-claude/sessions/`. Messages are appended incrementally — nothing is lost even if the process crashes.
-
-Session metadata also stores whether the conversation was started in normal mode or coordinator mode. When you resume a saved session, cc-mini restores that mode automatically.
-
-```bash
-# Resume a previous session by index or ID
-cc-mini --resume 1
-
-# Or use slash commands inside the REPL
-> /history              # List saved sessions
-> /resume 2             # Resume session #2
-> /resume a3f2b         # Resume by session ID prefix
-```
-
-### Context Compression
-
-When conversations grow long, cc-mini can compress older messages into a structured summary while keeping recent messages intact.
-
-```bash
-> /compact                          # Compress with default prompt
-> /compact focus on the auth work   # Compress with custom instructions
-```
-
-Auto-compact triggers when token estimate exceeds 100k.
-
-How it works:
-
-1. Messages split into **history** (summarized) and **recent** (kept as-is)
-2. History sent to API with a structured summary prompt (Primary Request, Key Concepts, Files, Current Work, etc.)
-3. Summary replaces old messages; recent messages preserved intact
-4. Tool-use / tool-result pairs are never split across the boundary
-
-### Slash Commands
+## Slash Commands
 
 | Command | Description |
 |---------|-------------|
 | `/help` | Show all available commands |
-| `/compact [instructions]` | Compress conversation context |
-| `/resume [number\|id]` | Resume a past session |
-| `/history` | List saved sessions for this directory |
-| `/clear` | Clear conversation, start a new session |
+| `/compact` | Compress conversation context |
+| `/resume` | Resume a past session |
+| `/history` | List saved sessions |
+| `/clear` | Clear conversation, start new session |
 | `/skills` | List all available skills |
-
----
-
-## Coordinator Mode
-
-> This feature exists in the official Claude Code codebase but has not been fully released by Anthropic. cc-mini implements and ships it.
-
-Coordinator mode turns the main assistant into an orchestrator. Instead of doing every substantial step itself, it can launch background workers to research the codebase, implement targeted changes, or verify work in parallel.
-
-### What it adds
-
-- **Background workers** — launch a worker and keep talking in the main session while it runs
-- **Continuation flow** — continue a completed worker later with more specific instructions
-- **Task notifications** — worker completions are injected back into the main conversation as structured `<task-notification>` messages
-- **Session-aware resume** — resumed sessions automatically restore coordinator mode when needed
-
-### Worker tools
-
-| Tool | Purpose |
-|------|---------|
-| `Agent` | Spawn a background worker with a self-contained prompt |
-| `SendMessage` | Continue an existing worker by task ID |
-| `TaskStop` | Stop a running worker |
-
-### Typical workflow
-
-1. Start `cc-mini --coordinator`
-2. Ask for a larger task such as researching a bug, implementing a fix, or verifying a change
-3. The coordinator launches one or more workers in the background
-4. As workers finish, their results arrive as `<task-notification>` messages
-5. The coordinator synthesizes those results and decides the next step
-
-### Notes
-
-- Workers currently use the standard file/code tools: `Read`, `Glob`, `Grep`, `Edit`, `Write`, and `Bash`
-- Worker execution is asynchronous, so coordinator mode is most useful in the interactive REPL
-
----
-
-## Skills
-
-Skills are one-command workflows. Type `/name` and the AI runs a full sequence of steps — no need to explain what to do each time.
-
-### Built-in Skills
-
-| Command | What it does |
-|---------|-------------|
-| `/simplify` | Reviews your changed code for duplication, quality, and efficiency — **then fixes it** |
-| `/review` | Reviews code changes and reports issues — **read-only, no edits** |
-| `/commit` | Runs `git add`, generates a clean commit message, and commits |
-| `/test` | Detects the project's test framework, runs it, and analyzes failures |
-
-All skills accept optional arguments:
-
-```
-/simplify focus on security
-/review only check the API routes
-/commit fix login page styling
-/test only run test_auth.py
-```
-
-### Example
-
-```
-cc-mini
-
-> write a fibonacci function to fib.py
-
-↳ Write(fib.py) …
-  ✓ done
-Created fib.py with recursive and iterative implementations...
-
-> /review
-
-Running skill: /review…
-↳ Bash(git diff) …  ✓ done
-
-## Code Review Report
-### Warning
-- fib_recursive() does not handle negative input
-- Missing type annotations
-### Suggestion
-- Consider adding @functools.lru_cache
-
-> /simplify
-
-Running skill: /simplify…
-↳ Bash(git diff) …  ✓ done
-↳ Read(fib.py) …    ✓ done
-↳ Edit(fib.py) …    ✓ done
-Fixed: added negative check, type annotations, lru_cache...
-
-> /test
-
-Running skill: /test…
-↳ Bash(python -m pytest tests/ -v) …
-  ✓ done
-All 3 tests passed ✓
-
-> /commit add fibonacci
-
-Running skill: /commit…
-↳ Bash(git add fib.py && git commit -m "feat: add fibonacci") …
-  ✓ done
-```
-
-### Custom Skills
-
-**Step 1**: Create a directory under `.cc-mini/skills/`
-
-```bash
-mkdir -p .cc-mini/skills/deploy
-```
-
-**Step 2**: Write a `SKILL.md` file
-
-```markdown
----
-name: deploy
-description: Deploy to staging environment
----
-
-# Deploy
-
-1. Run `git status` to check for uncommitted changes
-2. Run `./scripts/deploy.sh $ARGUMENTS`
-3. Report deployment status
-```
-
-`$ARGUMENTS` is replaced with whatever you type after the command. For example, `/deploy production` replaces `$ARGUMENTS` with `production`.
-
-**Step 3**: Use it
-
-```
-> /deploy staging
-Running skill: /deploy…
-```
-
-Skills auto-complete when you type `/`. Use `/skills` to see everything available:
-
-```
-> /skills
-┌──────────────┬─────────┬──────────────────────────┐
-│ Command      │ Source  │ Description              │
-├──────────────┼─────────┼──────────────────────────┤
-│ /simplify    │ bundled │ Review and fix code       │
-│ /review      │ bundled │ Review code (read-only)   │
-│ /commit      │ bundled │ Generate commit and push  │
-│ /test        │ bundled │ Run tests and analyze     │
-│ /deploy      │ project │ Deploy to staging         │
-└──────────────┴─────────┴──────────────────────────┘
-```
-
-### Where skills are discovered
-
-| Location | Scope |
-|----------|-------|
-| Built-in | 4 bundled skills, always available |
-| `~/.cc-mini/skills/` | Personal skills, available in all projects |
-| `<project>/.cc-mini/skills/` | Project skills, commit to git and share with your team |
-
-### SKILL.md frontmatter options
-
-```markdown
----
-name: deploy                    # Skill name (defaults to folder name)
-description: Deploy to staging  # Short description
-context: fork                   # fork = runs in isolation (won't affect current conversation)
-                                # inline = injected into conversation (default)
-allowed-tools: Bash, Read       # Restrict which tools the skill can use
-arguments: target               # Argument hint shown in /skills list
----
-
-Your prompt goes here...
-Use $ARGUMENTS for user-provided arguments.
-Use ${CLAUDE_SKILL_DIR} for the skill's directory path.
-```
-
----
-
-## Buddy — AI Companion
-
-> This feature exists in the official Claude Code codebase but has not been fully released by Anthropic. cc-mini implements and ships it.
-
-cc-mini includes **Buddy**, a Tamagotchi-style AI companion that lives in your terminal. Each user gets a unique pet determined by a seeded PRNG — same username always produces the same species, rarity, and stats.
-
-### Quick start
-
-```
-> /buddy              # Hatch your companion (first time)
-> /buddy              # Show companion card (after hatching)
-> /buddy pet          # Pet your companion
-> /buddy mute         # Mute companion reactions
-> /buddy unmute       # Unmute reactions
-```
-
-### How it works
-
-- **18 species**: duck, goose, blob, cat, dragon, octopus, owl, penguin, turtle, snail, ghost, axolotl, capybara, cactus, robot, rabbit, mushroom, chonk
-- **Bonus species**: pikachu (braille dot-matrix art) — only available via seed, see below
-- **5 rarities**: Common (60%), Uncommon (25%), Rare (10%), Epic (4%), Legendary (1%) — plus 1% shiny chance
-- **5 stats** (0–100): Debugging, Patience, Chaos, Wisdom, Snark — these shape how your companion talks
-- **ASCII sprite** with idle animation (blinking, fidgeting) in the terminal toolbar
-- **Automatic reactions**: after each Claude response, your companion comments in a speech bubble
-- **Direct conversation**: address your companion by name and it replies (with conversation memory)
-
-### Use a specific buddy (Pikachu)
-
-You can override the default buddy seed with `CC_MINI_BUDDY_SEED`. Set it to a seed containing "pikachu" to unlock the hidden Pikachu companion (braille dot-matrix art):
-
-```bash
-export CC_MINI_BUDDY_SEED=pikachu-3361
-cc-mini
-> /buddy
-```
-
-| Rarity | Seed |
-|--------|------|
-| Common ★ | `pikachu-21` |
-| Uncommon ★★ | `pikachu-116` |
-| Rare ★★★ | `pikachu-430` |
-| Epic ★★★★ | `pikachu-488` |
-| Legendary ★★★★★ | `pikachu-3361` |
-
-To go back to the default buddy:
-
-```bash
-unset CC_MINI_BUDDY_SEED
-cc-mini
-```
-
-### Example
-
-```
-> help me fix this bug
-
-Found the issue — off-by-one error in the loop...
-
-(×>) Glitch Honker: Off-by-one again, classic.
-
-> Glitch what do you think of this code?
-
-(×>) Glitch Honker: If it runs, don't ask me philosophical questions.
-```
-
-The companion's personality is generated by Claude on first hatch and persists permanently. Stats influence behavior: high Snark = sarcastic, high Patience = supportive, high Chaos = unpredictable.
-
-### Custom Species
-
-You can add your own species with custom ASCII art. Place a JSON file in `~/.cc-mini/buddy/species/` or `<project>/.cc-mini/buddy/species/`:
-
-```json
-{
-  "name": "pikachu",
-  "frames": [
-    [
-      "   \\\\  //    ",
-      "   (\\\\(//    ",
-      "  / {E}  {E} \\  ",
-      "  |  __  |  ",
-      "   \\____/   "
-    ],
-    [
-      "   ))  ((    ",
-      "   (\\\\(//    ",
-      "  / {E}  {E} \\  ",
-      "  |  __  |  ",
-      "   \\____/   "
-    ]
-  ],
-  "face": "({E}v{E})"
-}
-```
-
-- `{E}` is replaced with the companion's eye character at runtime
-- Each frame is 5 lines tall, ~12 chars wide
-- Provide 2-3 frames for idle animation variety
-- The `face` field is used for the compact one-liner display
-
-Custom species are added to the roll pool. Set `CC_MINI_BUDDY_SEED` to control which companion you get.
-
----
-
-## KAIROS — Memory System
-
-> This feature exists in the official Claude Code codebase but has not been fully released by Anthropic. cc-mini implements and ships it.
-
-The assistant can remember information across sessions and automatically consolidate memories over time.
-
-### Slash commands
-
-| Command | Description |
-|---------|-------------|
-| `/remember <text>` | Save a note to the daily log |
-| `/memory` | Show current memory index |
-| `/dream` | Manually consolidate daily logs into organized topic files |
-
-**Auto-dream** runs automatically after a turn when ≥ 24 hours and ≥ 5 new sessions have passed since the last consolidation. Configurable via `--dream-interval`, `--dream-min-sessions`, or `--no-auto-dream`.
-
-### Try it out
-
-```bash
-# Save some notes and manually consolidate
-cc-mini --auto-approve
-> /remember I prefer Python over JavaScript
-> /remember Our project uses gRPC + PostgreSQL
-> /dream                    # reads daily logs, creates topic files + MEMORY.md
-> /memory                   # verify the memory index
-
-# Start a new session — the model should recall your preferences
-cc-mini
-> What do you know about my preferences?
-
-# Test auto-dream (default: 24h + 5 sessions; use flags to lower thresholds for testing)
-for i in $(seq 1 3); do cc-mini "session $i"; done
-cc-mini --dream-interval 0 --dream-min-sessions 1 --auto-approve
-> hello
-# Auto-dream triggers after the response
-```
-
-Data is stored in `~/.mini-claude/` (memory in `memory/`, sessions in `sessions/`).
-
----
-
-## Sandbox
-
-> This feature exists in the official Claude Code codebase but has not been fully released by Anthropic. cc-mini implements and ships it.
-
-Runs BashTool commands inside a [bubblewrap (bwrap)](https://github.com/containers/bubblewrap) sandbox on Linux, restricting filesystem writes and network access. Prevents accidental or malicious destructive operations.
-
-### How it works
-
-When sandbox is enabled, every Bash command is wrapped with bwrap:
-
-- Entire filesystem mounted **read-only** (`--ro-bind / /`)
-- Only the current working directory is **writable** (`--bind $CWD $CWD`)
-- Network access **isolated** by default (`--unshare-net`)
-- Configuration files (`.cc-mini.toml`, `CLAUDE.md`) **protected** from modification
-- PID namespace isolated (`--unshare-pid`)
-
-### Sandbox modes
-
-| Mode | Behavior |
-|------|----------|
-| `auto-allow` | Sandbox enabled, bash commands auto-approved (no permission prompt) |
-| `regular` | Sandbox enabled, bash commands still require confirmation |
-| `disabled` | No sandbox (default) |
-
-### Configure via REPL
-
-```
-> /sandbox                     # interactive mode selector
-> /sandbox status              # show current status and dependency check
-> /sandbox mode auto-allow     # enable sandbox with auto-allow
-> /sandbox mode regular        # enable sandbox with manual approval
-> /sandbox mode disabled       # disable sandbox
-> /sandbox exclude "docker *"  # skip sandbox for matching commands
-```
-
-### Configure via TOML
-
-Add a `[sandbox]` section to your config file (`.cc-mini.toml` or `~/.config/cc-mini/config.toml`):
-
-```toml
-[sandbox]
-enabled = true
-auto_allow_bash = true
-allow_unsandboxed = false
-excluded_commands = ["docker *", "npm run *"]
-unshare_net = true
-
-[sandbox.filesystem]
-allow_write = ["."]
-deny_write = []
-deny_read = []
-```
-
-### Excluded commands
-
-Some commands need to run outside the sandbox (e.g., Docker, package managers). Add patterns to `excluded_commands`:
-
-- **Exact**: `"git"` matches only `git`
-- **Prefix**: `"npm run"` matches `npm run test`, `npm run build`, etc.
-- **Wildcard**: `"docker *"` matches `docker build .`, `docker run ...`, etc.
-
-Excluded commands still require the normal permission prompt even in auto-allow mode.
-
-### Graceful degradation
-
-If bwrap is not installed or unavailable (non-Linux, Docker without user namespaces), sandbox is automatically disabled. Check with `/sandbox status`:
-
-```
-Sandbox Status
-  Mode: auto-allow
-  Enabled: no
-Dependency errors:
-  bubblewrap (bwrap) not found. Install: apt install bubblewrap
-```
+| `/buddy` | Companion pet — hatch, pet, stats |
+| `/review` | Code review (skill) |
+| `/commit` | Git commit (skill) |
+| `/test` | Run tests (skill) |
+| `/simplify` | Review and fix code (skill) |
+
+Type `/` to see autocomplete suggestions.
 
 ---
 
@@ -744,71 +156,43 @@ Dependency errors:
 
 ```
 src/core/
-├── main.py           # CLI entry point + REPL + coordinator mode wiring
+├── main.py           # CLI entry point + REPL
 ├── engine.py         # Streaming API loop + tool execution
-├── context.py        # System prompt builder (git status, date, memory)
-├── coordinator.py    # Coordinator mode flags, prompts, and session-mode matching
+├── llm.py            # LLM client (Anthropic + OpenAI)
 ├── config.py         # Configuration (CLI, env, TOML)
-├── commands.py       # Slash command system + skill dispatch + resume handling
-├── session.py        # Session persistence (JSONL + session mode metadata)
-├── compact.py        # Context window compaction
-├── skills.py         # Skill loader, registry, and discovery
+├── context.py        # System prompt builder
+├── commands.py       # Slash command system
+├── session.py        # Session persistence
+├── compact.py        # Context compression
+├── coordinator.py    # Coordinator mode
+├── worker_manager.py # Background worker lifecycle
+├── skills.py         # Skill loader and registry
 ├── skills_bundled.py # Built-in skills (simplify, review, commit, test)
-├── memory.py         # KAIROS memory system (logs, dream, sessions)
-├── permissions.py    # Permission checker + sandbox auto-allow
-├── worker_manager.py # Background worker lifecycle + task notifications
+├── memory.py         # KAIROS memory system
+├── permissions.py    # Permission checker
+├── cost_tracker.py   # Token usage tracking
 ├── _keylistener.py   # Esc/Ctrl+C detection
-├── sandbox/          # Sandbox subsystem (bwrap isolation)
-│   ├── config.py         # SandboxConfig dataclass + TOML persistence
-│   ├── checker.py        # Dependency checking (bwrap, user namespaces)
-│   ├── command_matcher.py # Excluded command pattern matching
-│   ├── wrapper.py        # bwrap command line generator
-│   └── manager.py        # Unified sandbox manager interface
-├── tools/
-│   ├── base.py       # Tool ABC + ToolResult
-│   ├── file_read.py
-│   ├── file_edit.py
-│   ├── file_write.py
-│   ├── glob_tool.py
-│   ├── grep_tool.py
-│   ├── bash.py       # Bash tool with sandbox integration
-│   └── agent.py      # Coordinator-only tools: Agent, SendMessage, TaskStop
-└── buddy/
-    ├── types.py      # Data model: species, rarity, stats
-    ├── companion.py  # Mulberry32 PRNG + deterministic generation
-    ├── sprites.py    # ASCII art for 18 species (3 frames each)
-    ├── animator.py   # Real-time tick-based animation engine
-    ├── render.py     # Rich terminal rendering (cards, bubbles)
-    ├── commands.py   # /buddy command handler
-    ├── observer.py   # Post-response reaction generator
-    ├── prompt.py     # System prompt integration
-    └── storage.py    # JSON persistence
+├── sandbox/          # Bubblewrap sandbox subsystem
+├── tools/            # Tool implementations
+└── buddy/            # AI companion pet system
 ```
-
----
 
 ## Running Tests
 
 ```bash
-# All tests
 pytest tests/ -v
-
-# Sandbox tests only
-pytest tests/test_sandbox*.py -v
-
-# Skip integration tests that require bwrap
-pytest tests/ -v -k "not integration"
+pytest tests/ -v -k "not integration"  # skip bwrap tests
 ```
 
 ---
 
-## Tips
+## Documentation
 
-- Place a `CLAUDE.md` file in your project root — it will be included in the system prompt automatically
-- Use `--auto-approve` when running non-interactively or for trusted tasks
-- Use `/history` to list past sessions, `/resume` to continue one
-- Use `/simplify` after making changes to auto-review and clean up code
-- Create project-specific skills in `.cc-mini/skills/` for repeatable workflows
-- Conversations auto-compact when approaching 100k tokens; use `/compact` to trigger manually
-- Memories persist across sessions in `~/.mini-claude/memory/`; run `/dream` to consolidate
-- Type `/buddy` to hatch your AI companion — it watches your coding sessions and comments from the sideline
+| Topic | Link |
+|-------|------|
+| Configuration (API keys, TOML, CLI flags) | [docs/configuration.md](docs/configuration.md) |
+| Buddy (AI companion pet) | [docs/buddy.md](docs/buddy.md) |
+| Coordinator Mode (background workers) | [docs/coordinator.md](docs/coordinator.md) |
+| KAIROS Memory System | [docs/memory.md](docs/memory.md) |
+| Skills (custom workflows) | [docs/skills.md](docs/skills.md) |
+| Sandbox (bash isolation) | [docs/sandbox.md](docs/sandbox.md) |
