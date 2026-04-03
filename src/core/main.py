@@ -882,7 +882,7 @@ def main() -> None:
         console.print(f"[dim]$ {cmd}[/dim]")
         try:
             result = subprocess.run(
-                cmd, shell=True, text=True,
+                cmd, shell=True, text=True, encoding="utf-8", errors="replace",
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
             if result.stdout:
