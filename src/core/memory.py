@@ -11,8 +11,14 @@ from typing import Any
 MEMORY_DIR = Path.home() / ".mini-claude" / "memory"
 SESSIONS_DIR = Path.home() / ".mini-claude" / "sessions"
 MAX_MEMORY_INDEX_CHARS = 10_000
+MAX_ENTRYPOINT_LINES = 200
+ENTRYPOINT_NAME = "MEMORY.md"
 LOCK_FILE_NAME = ".consolidate-lock"
 HOLDER_STALE_S = 3600  # 1 hour — reclaim lock after this
+SESSION_SCAN_INTERVAL_S = 600  # 10 minutes — scan throttle
+
+# Module-level scan throttle state (mirrors TS closure in initAutoDream)
+_last_session_scan_at: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -132,13 +138,25 @@ def count_sessions_since(since_ts: float) -> int:
 def should_auto_dream(memory_dir: Path, min_hours: float, min_sessions: int,
                       current_session_id: str,
                       sessions_dir: Path | None = None) -> bool:
-    """Check all gates: time ≥ min_hours AND sessions ≥ min_sessions."""
+    """Check all gates: time ≥ min_hours AND sessions ≥ min_sessions.
+
+    Includes a 10-minute scan throttle (mirrors TS SESSION_SCAN_INTERVAL_MS)
+    to avoid re-scanning sessions every turn when time-gate passes but
+    session-gate doesn't.
+    """
+    global _last_session_scan_at
+
     last = read_last_consolidated_at(memory_dir)
     now = datetime.now().timestamp()
     hours_since = (now - last) / 3600 if last > 0 else float("inf")
 
     if hours_since < min_hours:
         return False
+
+    # Scan throttle: skip session counting if last scan was < 10 min ago
+    if now - _last_session_scan_at < SESSION_SCAN_INTERVAL_S:
+        return False
+    _last_session_scan_at = now
 
     # Count sessions newer than last consolidation, exclude current
     scan_dir = sessions_dir or SESSIONS_DIR
@@ -149,6 +167,21 @@ def should_auto_dream(memory_dir: Path, min_hours: float, min_sessions: int,
                 count += 1
 
     return count >= min_sessions
+
+
+def list_sessions_since(since_ts: float, sessions_dir: Path | None = None,
+                        current_session_id: str = "") -> list[str]:
+    """Return session IDs (filenames without .jsonl) touched since since_ts."""
+    scan_dir = sessions_dir or SESSIONS_DIR
+    result: list[str] = []
+    if not scan_dir.exists():
+        return result
+    for f in scan_dir.iterdir():
+        if (f.suffix == ".jsonl"
+                and current_session_id not in f.name
+                and f.stat().st_mtime > since_ts):
+            result.append(f.stem)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -274,59 +307,106 @@ brief descriptions. Keep it under 200 lines.
 # Dream consolidation prompt
 # ---------------------------------------------------------------------------
 
-def build_dream_prompt(memory_dir: Path) -> str:
+def build_dream_prompt(memory_dir: Path, transcript_dir: str = "",
+                       session_ids: list[str] | None = None) -> str:
     """Build the 4-phase consolidation prompt for the dream agent.
 
-    Mirrors Claude Code's consolidationPrompt.ts structure.
+    Closely mirrors Claude Code's consolidationPrompt.ts.
     """
+    extra_parts: list[str] = []
+
+    # Tool constraints note (matches TS: added as `extra` only for auto-dream)
+    extra_parts.append(
+        "**Tool constraints for this run:** Bash is not available. "
+        "Edit and Write are restricted to files within the memory directory. "
+        "Read, Grep, and Glob are unrestricted. Plan your exploration with "
+        "this in mind."
+    )
+
+    if session_ids:
+        extra_parts.append(
+            f"Sessions since last consolidation ({len(session_ids)}):\n"
+            + "\n".join(f"- {sid}" for sid in session_ids)
+        )
+
+    extra = "\n\n".join(extra_parts)
+    extra_section = f"\n\n## Additional context\n\n{extra}" if extra else ""
+
+    transcript_line = ""
+    if transcript_dir:
+        transcript_line = (
+            f"\nSession transcripts: `{transcript_dir}` "
+            "(large JSONL files — grep narrowly, don't read whole files)\n"
+        )
+
     return f"""\
-You are running a KAIROS dream consolidation. Your job is to read daily logs \
-and existing memories, then produce consolidated topic files and an updated \
-MEMORY.md index.
+# Dream: Memory Consolidation
 
-Memory directory: {memory_dir}
-Logs directory: {memory_dir / 'logs'}
+You are performing a dream — a reflective pass over your memory files. \
+Synthesize what you've learned recently into durable, well-organized memories \
+so that future sessions can orient quickly.
 
-## Phase 1: Orient
-- Use Glob to list all files in {memory_dir}/ (topic files + MEMORY.md).
-- Read MEMORY.md if it exists to understand the current index.
-- Skim existing topic files to know what's already captured.
-
-## Phase 2: Gather recent signal
-- Use Glob to find all daily log files under {memory_dir / 'logs'}/
-- Read each log file. Priority: daily logs first, then existing memories that \
-may have drifted.
-
-## Phase 3: Consolidate
-Group related entries into topic files. Each topic file must have YAML frontmatter:
-
-```markdown
----
-name: descriptive name
-description: one-line description for relevance decisions
-type: user | feedback | project | reference
+Memory directory: `{memory_dir}`
+This directory already exists — write to it directly with the Write tool \
+(do not run mkdir or check for its existence).
+{transcript_line}
 ---
 
-Content here. For feedback/project types, structure as:
-Rule or fact
-**Why:** the reason
-**How to apply:** when/where this kicks in
-```
+## Phase 1 — Orient
 
-Rules:
-- Merge into existing files rather than creating duplicates
-- Convert relative dates to absolute dates
-- One file per topic (e.g., user_preferences.md, project_goals.md)
-- Write or update files in {memory_dir}/ using the Write or Edit tools
+- Use Glob to list all files in `{memory_dir}/` to see what already exists
+- Read `{ENTRYPOINT_NAME}` to understand the current index
+- Skim existing topic files so you improve them rather than creating duplicates
+- If `logs/` or `sessions/` subdirectories exist, review recent entries there
 
-## Phase 4: Prune and index
-- Update {memory_dir}/MEMORY.md as a concise index
-- One line per topic file with a brief description
-- Remove stale pointers to files that no longer exist
-- Keep MEMORY.md under 200 lines
+## Phase 2 — Gather recent signal
 
-Do NOT delete daily log files — they are append-only.
-Work through all four phases now."""
+Look for new information worth persisting. Sources in rough priority order:
+
+1. **Daily logs** (`logs/YYYY/MM/YYYY-MM-DD.md`) if present — these are the \
+append-only stream
+2. **Existing memories that drifted** — facts that contradict something you \
+see in the codebase now
+3. **Transcript search** — if you need specific context (e.g., "what was the \
+error message from yesterday's build failure?"), grep the JSONL transcripts \
+for narrow terms:
+   `grep -rn "<narrow term>" {transcript_dir}/ --include="*.jsonl" | tail -50`
+
+Don't exhaustively read transcripts. Look only for things you already suspect \
+matter.
+
+## Phase 3 — Consolidate
+
+For each thing worth remembering, write or update a memory file at the top \
+level of the memory directory. Use the memory file format and type conventions \
+from your system prompt's auto-memory section — it's the source of truth for \
+what to save, how to structure it, and what NOT to save.
+
+Focus on:
+- Merging new signal into existing topic files rather than creating \
+near-duplicates
+- Converting relative dates ("yesterday", "last week") to absolute dates so \
+they remain interpretable after time passes
+- Deleting contradicted facts — if today's investigation disproves an old \
+memory, fix it at the source
+
+## Phase 4 — Prune and index
+
+Update `{ENTRYPOINT_NAME}` so it stays under {MAX_ENTRYPOINT_LINES} lines \
+AND under ~25KB. It's an **index**, not a dump — each entry should be one \
+line under ~150 characters: `- [Title](file.md) — one-line hook`. Never \
+write memory content directly into it.
+
+- Remove pointers to memories that are now stale, wrong, or superseded
+- Demote verbose entries: if an index line is over ~200 chars, it's carrying \
+content that belongs in the topic file — shorten the line, move the detail
+- Add pointers to newly important memories
+- Resolve contradictions — if two files disagree, fix the wrong one
+
+---
+
+Return a brief summary of what you consolidated, updated, or pruned. \
+If nothing changed (memories are already tight), say so.{extra_section}"""
 
 
 # ---------------------------------------------------------------------------

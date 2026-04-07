@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import mimetypes
+import os
 import re
 import sys
 import time
@@ -66,6 +67,7 @@ from .memory import (
     try_acquire_lock,
     release_lock,
     record_consolidation,
+    read_last_consolidated_at,
 )
 from .skills import discover_skills, list_skills, build_skills_prompt_section
 from .skills_bundled import register_bundled_skills
@@ -627,15 +629,36 @@ def run_query(engine: Engine, user_input: str | list, print_mode: bool,
 
 
 def _run_dream(engine: Engine, memory_dir: Path,
-               permissions: PermissionChecker, quiet: bool = False) -> None:
-    """Run dream consolidation: snapshot messages, submit dream prompt, restore."""
+               permissions: PermissionChecker, quiet: bool = False,
+               transcript_dir: str = "",
+               session_ids: list[str] | None = None) -> None:
+    """Run dream consolidation: snapshot messages, submit dream prompt, restore.
+
+    Mirrors TS autoDream.ts — auto-dream (quiet=True) gets permission isolation;
+    manual /dream runs with normal permissions (matching TS behavior).
+    """
     if not quiet:
         console.print("[dim]Starting dream consolidation…[/dim]")
+
+    # Auto-dream gets permission isolation; manual /dream does not (matches TS)
+    isolated = quiet
+    if isolated:
+        permissions.enter_dream_mode(str(memory_dir))
+
     saved_messages = list(engine.messages)
     engine.messages = []
-    dream_prompt = build_dream_prompt(memory_dir)
-    run_query(engine, dream_prompt, print_mode=False, permissions=permissions, quiet=quiet)
-    engine.messages = saved_messages
+    try:
+        dream_prompt = build_dream_prompt(
+            memory_dir,
+            transcript_dir=transcript_dir,
+            session_ids=session_ids,
+        )
+        run_query(engine, dream_prompt, print_mode=False, permissions=permissions, quiet=quiet)
+    finally:
+        engine.messages = saved_messages
+        if isolated:
+            permissions.exit_dream_mode()
+
     # Rebuild system prompt to pick up updated MEMORY.md
     engine.system_prompt = build_system_prompt(memory_dir=memory_dir)
     record_consolidation(memory_dir)
@@ -1211,10 +1234,32 @@ def main() -> None:
             current_session_id=current_sid,
             sessions_dir=sessions_path,
         ):
+            prior_mtime = read_last_consolidated_at(memory_dir)
             if try_acquire_lock(memory_dir):
-                console.print("[dim]Auto-dream running…[/dim]")
-                _run_dream(engine, memory_dir, permissions, quiet=True)
-                release_lock(memory_dir)
+                # Gather session IDs for the dream prompt
+                from .memory import list_sessions_since
+                sids = list_sessions_since(
+                    prior_mtime,
+                    sessions_dir=sessions_path,
+                    current_session_id=current_sid,
+                )
+                transcript_dir = str(sessions_path) if sessions_path else ""
+                try:
+                    _run_dream(
+                        engine, memory_dir, permissions, quiet=True,
+                        transcript_dir=transcript_dir,
+                        session_ids=sids,
+                    )
+                    release_lock(memory_dir)
+                except Exception:
+                    # Rollback: rewind lock mtime so dream retries next time
+                    from .memory import _lock_path
+                    try:
+                        lp = _lock_path(memory_dir)
+                        if lp.exists():
+                            os.utime(lp, (prior_mtime, prior_mtime))
+                    except OSError:
+                        pass
 
     # Print cost summary on exit
     if cost_tracker.total_cost_usd > 0:

@@ -30,14 +30,30 @@ class PermissionChecker:
         self._esc_listener: EscListener | None = None
         self._sandbox = sandbox_manager
         self._plan_manager: PlanModeManager | None = None
+        # Dream mode: restrict writes to memory directory only
+        self._dream_mode: bool = False
+        self._dream_memory_dir: str | None = None
 
     def set_plan_manager(self, plan_manager: PlanModeManager) -> None:
         self._plan_manager = plan_manager
+
+    def enter_dream_mode(self, memory_dir: str) -> None:
+        """Enable dream permission isolation — writes only within memory_dir."""
+        self._dream_mode = True
+        self._dream_memory_dir = os.path.realpath(memory_dir)
+
+    def exit_dream_mode(self) -> None:
+        self._dream_mode = False
+        self._dream_memory_dir = None
 
     def set_esc_listener(self, listener: EscListener | None):
         self._esc_listener = listener
 
     def check(self, tool: Tool, inputs: dict) -> PermissionBehavior:
+        # Dream mode: strict isolation — read-only + memory-dir writes only
+        if self._dream_mode:
+            return self._check_dream(tool, inputs)
+
         # Plan mode restrictions: only allow read-only tools + plan file writes
         if self._plan_manager is not None and self._plan_manager.is_active:
             if tool.name in _PLAN_MODE_ALLOWED_TOOLS:
@@ -79,6 +95,22 @@ class PermissionChecker:
             return "allow"
 
         return self._prompt_user(tool, inputs)
+
+    def _check_dream(self, tool: Tool, inputs: dict) -> PermissionBehavior:
+        """Dream mode: read-only tools + Edit/Write only within memory dir."""
+        if tool.is_read_only():
+            return "allow"
+        if tool.name in ("Edit", "Write"):
+            file_path = inputs.get("file_path", "")
+            if (
+                self._dream_memory_dir
+                and isinstance(file_path, str)
+                and os.path.realpath(file_path).startswith(self._dream_memory_dir)
+            ):
+                return "allow"
+            return "deny"
+        # Bash and everything else: denied during dream
+        return "deny"
 
     def _prompt_user(self, tool: Tool, inputs: dict) -> PermissionBehavior:
         from rich.console import Console
