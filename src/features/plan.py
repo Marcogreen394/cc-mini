@@ -66,7 +66,7 @@ class PlanModeManager:
     def __init__(self) -> None:
         self._engine: Engine | None = None
         self._permissions: PermissionChecker | None = None
-        self._build_plan_worker_engine: Callable[[], object] | None = None
+        self._build_explore_engine: Callable[[], object] | None = None
         self._plan_worker_manager: object | None = None
         self._active: bool = False
         self._plan_file: Path | None = None
@@ -76,10 +76,10 @@ class PlanModeManager:
     def bind_engine(
         self,
         engine: Engine,
-        build_plan_worker_engine: Callable[[], object] | None = None,
+        build_explore_engine: Callable[[], object] | None = None,
     ) -> None:
         self._engine = engine
-        self._build_plan_worker_engine = build_plan_worker_engine
+        self._build_explore_engine = build_explore_engine
 
     def set_permissions(self, permissions: PermissionChecker) -> None:
         self._permissions = permissions
@@ -147,13 +147,13 @@ class PlanModeManager:
             ExitPlanModeTool(self),
         ]
 
-        # Add parallel subagent tools if worker engine builder is available
+        # Add parallel subagent tools if explore engine builder is available
         self._plan_worker_manager = None
-        if self._build_plan_worker_engine is not None:
-            from features.worker_manager import WorkerManager
+        if self._build_explore_engine is not None:
+            from features.agents.worker_manager import WorkerManager
             from tools.agent import AgentTool, SendMessageTool, TaskStopTool
 
-            self._plan_worker_manager = WorkerManager(self._build_plan_worker_engine)
+            self._plan_worker_manager = WorkerManager({"Explore": self._build_explore_engine})
             plan_tools.extend([
                 AgentTool(self._plan_worker_manager),
                 SendMessageTool(self._plan_worker_manager),

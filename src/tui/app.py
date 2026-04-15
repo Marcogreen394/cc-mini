@@ -37,7 +37,7 @@ from core.session import SessionStore
 from features.compact import CompactService, estimate_tokens, should_compact
 from tui.keylistener import EscListener
 from core.permissions import PermissionChecker
-from features.worker_manager import WorkerManager
+from features.agents import WorkerManager, EXPLORE_SYSTEM_PROMPT
 from features.sandbox.config import load_sandbox_config
 from features.sandbox.manager import SandboxManager
 from features.memory import (
@@ -207,22 +207,16 @@ def main() -> None:
             effort=app_config.effort,
         )
 
-    def _build_plan_worker_engine() -> Engine:
-        """Build a read-only worker engine for plan-mode subagents."""
-        worker_permissions = PermissionChecker(
+    def _build_explore_engine() -> Engine:
+        """Build a read-only Explore agent engine — lean, no project context by design."""
+        explore_permissions = PermissionChecker(
             auto_approve=True,
             sandbox_manager=sandbox_mgr,
         )
-        worker_prompt = build_system_prompt(cwd=cwd, model=app_config.model, memory_dir=memory_dir)
-        worker_prompt += (
-            "\n\nYou are a read-only exploration agent. "
-            "Use Glob, Grep, Read, and Bash (read-only commands only) to research the codebase. "
-            "Report your findings clearly and concisely."
-        )
         return Engine(
             tools=[FileReadTool(), GlobTool(), GrepTool(), BashTool(sandbox_manager=sandbox_mgr)],
-            system_prompt=worker_prompt,
-            permission_checker=worker_permissions,
+            system_prompt=EXPLORE_SYSTEM_PROMPT,
+            permission_checker=explore_permissions,
             provider=app_config.provider,
             api_key=app_config.api_key,
             base_url=app_config.base_url,
@@ -231,7 +225,10 @@ def main() -> None:
             effort=app_config.effort,
         )
 
-    worker_manager = WorkerManager(build_worker_engine=_build_worker_engine)
+    worker_manager = WorkerManager({
+        "worker": _build_worker_engine,
+        "Explore": _build_explore_engine,
+    })
 
     # Plan mode manager
     from features.plan import PlanModeManager
@@ -280,7 +277,7 @@ def main() -> None:
         advisor_model=app_config.advisor_model,
         advisor_max_uses=app_config.advisor_max_uses,
     )
-    plan_manager.bind_engine(engine, build_plan_worker_engine=_build_plan_worker_engine)
+    plan_manager.bind_engine(engine, build_explore_engine=_build_explore_engine)
     plan_manager.set_permissions(permissions)
     permissions.set_plan_manager(plan_manager)
     compact_service = CompactService(

@@ -1,7 +1,7 @@
 import time
 
 from core.engine import AbortedError
-from features.worker_manager import WorkerManager
+from features.agents.worker_manager import WorkerManager
 
 
 class _FakeUsage:
@@ -48,7 +48,7 @@ def _wait_for_notification(manager: WorkerManager, timeout: float = 1.0) -> str:
 
 def test_worker_manager_spawns_and_reports_completion():
     engine = _FakeEngine("complete")
-    manager = WorkerManager(build_worker_engine=lambda: engine)
+    manager = WorkerManager({"worker": lambda: engine})
 
     launched = manager.spawn(description="Inspect", prompt="read the file")
     notification = _wait_for_notification(manager)
@@ -62,7 +62,7 @@ def test_worker_manager_spawns_and_reports_completion():
 
 def test_worker_manager_can_continue_completed_task():
     engine = _FakeEngine("complete")
-    manager = WorkerManager(build_worker_engine=lambda: engine)
+    manager = WorkerManager({"worker": lambda: engine})
 
     launched = manager.spawn(description="Inspect", prompt="first")
     _wait_for_notification(manager)
@@ -75,10 +75,26 @@ def test_worker_manager_can_continue_completed_task():
 
 def test_worker_manager_can_stop_running_task():
     engine = _FakeEngine("abortable")
-    manager = WorkerManager(build_worker_engine=lambda: engine)
+    manager = WorkerManager({"worker": lambda: engine})
 
     launched = manager.spawn(description="Long task", prompt="wait")
     manager.stop_task(task_id=launched["task_id"])
     notification = _wait_for_notification(manager)
 
     assert "<status>killed</status>" in notification
+
+
+def test_worker_manager_dispatches_explore_to_explore_factory():
+    worker_engine = _FakeEngine("complete")
+    explore_engine = _FakeEngine("complete")
+    manager = WorkerManager({
+        "worker": lambda: worker_engine,
+        "Explore": lambda: explore_engine,
+    })
+
+    manager.spawn(description="Search files", prompt="find all .py files", subagent_type="Explore")
+    notification = _wait_for_notification(manager)
+
+    assert "<status>completed</status>" in notification
+    assert explore_engine.prompts == ["find all .py files"]
+    assert worker_engine.prompts == []
