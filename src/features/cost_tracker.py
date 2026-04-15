@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +31,110 @@ _TIER_HAIKU_35 = _PricingTier(input=0.80, output=4.0, cache_write=1.0, cache_rea
 _TIER_HAIKU_45 = _PricingTier(input=1.0, output=5.0, cache_write=1.25, cache_read=0.10)
 
 _TIER_30_150 = _PricingTier(input=30.0, output=150.0, cache_write=37.5, cache_read=3.0)
+
+
+# ---------------------------------------------------------------------------
+# Required model fields & model registry
+# ---------------------------------------------------------------------------
+
+REQUIRED_MODEL_FIELDS = frozenset({
+    "id",
+    "provider",
+    "pricing_tier",
+})
+
+
+@dataclass(frozen=True)
+class ModelInfo:
+    """Metadata for a known model."""
+    id: str
+    provider: str
+    pricing_tier: _PricingTier
+    deprecated: bool = False
+    deprecation_message: str = ""
+    hugging_face_id: str = ""
+
+
+def validate_model_info(info: ModelInfo) -> list[str]:
+    """Return list of missing/empty required fields."""
+    errors = []
+    for field_name in sorted(REQUIRED_MODEL_FIELDS):
+        value = getattr(info, field_name, None)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            errors.append(field_name)
+    return errors
+
+
+MODEL_REGISTRY: dict[str, ModelInfo] = {
+    # Sonnet family
+    "claude-sonnet-4-6": ModelInfo(
+        id="claude-sonnet-4-6",
+        provider="anthropic",
+        pricing_tier=_TIER_3_15,
+    ),
+    "claude-3-7-sonnet": ModelInfo(
+        id="claude-3-7-sonnet",
+        provider="anthropic",
+        pricing_tier=_TIER_3_15,
+    ),
+    "claude-3-5-sonnet": ModelInfo(
+        id="claude-3-5-sonnet",
+        provider="anthropic",
+        pricing_tier=_TIER_3_15,
+        deprecated=True,
+        deprecation_message="Use claude-sonnet-4-6 instead.",
+    ),
+    # Opus family
+    "claude-opus-4-6": ModelInfo(
+        id="claude-opus-4-6",
+        provider="anthropic",
+        pricing_tier=_TIER_5_25,
+        hugging_face_id="anthropic/claude-opus-4-6",
+    ),
+    "claude-opus-4-5": ModelInfo(
+        id="claude-opus-4-5",
+        provider="anthropic",
+        pricing_tier=_TIER_5_25,
+        hugging_face_id="anthropic/claude-opus-4-5",
+    ),
+    "claude-opus-4-1": ModelInfo(
+        id="claude-opus-4-1",
+        provider="anthropic",
+        pricing_tier=_TIER_15_75,
+        deprecated=True,
+        deprecation_message="Use claude-opus-4-6 instead.",
+    ),
+    "claude-opus-4": ModelInfo(
+        id="claude-opus-4",
+        provider="anthropic",
+        pricing_tier=_TIER_15_75,
+        deprecated=True,
+        deprecation_message="Use claude-opus-4-6 instead.",
+    ),
+    # Haiku family
+    "claude-haiku-4-5": ModelInfo(
+        id="claude-haiku-4-5",
+        provider="anthropic",
+        pricing_tier=_TIER_HAIKU_45,
+        hugging_face_id="anthropic/claude-haiku-4-5",
+    ),
+    "claude-3-5-haiku": ModelInfo(
+        id="claude-3-5-haiku",
+        provider="anthropic",
+        pricing_tier=_TIER_HAIKU_35,
+        deprecated=True,
+        deprecation_message="Use claude-haiku-4-5 instead.",
+    ),
+}
+
+
+def get_model_info(model: str) -> ModelInfo | None:
+    """Look up model info by prefix match against the registry."""
+    model_lower = model.lower()
+    for prefix, info in MODEL_REGISTRY.items():
+        if model_lower.startswith(prefix):
+            return info
+    return None
 
 # Model prefix/substring -> tier.  Order matters: first match wins.
 _MODEL_PRICING: list[tuple[str, _PricingTier]] = [

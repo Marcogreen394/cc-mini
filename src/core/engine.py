@@ -270,6 +270,9 @@ class Engine:
                                     "advisor_output_tokens": getattr(final.usage, "advisor_output_tokens", 0) or 0,
                                 }, api_duration_s=_api_elapsed, advisor_model=self._advisor_model if self._advisor_enabled else None)
                                 yield ("usage", final.usage)
+                            # Warn if response was truncated by max_tokens
+                            if final.stop_reason == "max_tokens":
+                                yield ("error", "Response truncated: hit max_tokens limit.")
                             for block in final.content:
                                 if _block_type(block) == "tool_use":
                                     tool_uses.append(block)

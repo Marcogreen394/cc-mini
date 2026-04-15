@@ -23,6 +23,7 @@ from tools import FileReadTool
 from tools import FileWriteTool
 from tools import GlobTool
 from tools import GrepTool
+from tools import TodoWriteTool, TodoUpdateTool
 from features.coordinator import (
     current_session_mode,
     get_coordinator_system_prompt,
@@ -33,6 +34,7 @@ from features.coordinator import (
     set_coordinator_mode,
 )
 from features.cost_tracker import CostTracker
+from features.todo import TodoManager
 from core.session import SessionStore
 from features.compact import CompactService, estimate_tokens, should_compact
 from tui.keylistener import EscListener
@@ -241,6 +243,8 @@ def main() -> None:
         tools.extend([
             EnterPlanModeTool(plan_manager),
             ExitPlanModeTool(plan_manager),
+            TodoWriteTool(todo_manager),
+            TodoUpdateTool(todo_manager),
         ])
         if coordinator_enabled:
             tools.extend([
@@ -254,6 +258,7 @@ def main() -> None:
 
     # Session & compact services
     cost_tracker = CostTracker()
+    todo_manager = TodoManager()
     session_store: SessionStore | None = None
     if not args.print:
         session_store = SessionStore(
@@ -331,7 +336,8 @@ def main() -> None:
     # Non-interactive / piped
     if args.print or args.prompt:
         prompt_text = args.prompt or sys.stdin.read()
-        run_query(engine, parse_input(prompt_text), print_mode=args.print, permissions=permissions)
+        run_query(engine, parse_input(prompt_text), print_mode=args.print, permissions=permissions,
+                  todo_manager=todo_manager)
         if worker_manager.has_running_tasks():
             console.print(
                 "\n[dim]Background workers are still running. Use interactive mode "
@@ -434,7 +440,8 @@ def main() -> None:
                     icon = "[green]●[/green]" if status == "completed" else "[red]●[/red]"
                     console.print(f"\n{icon} [dim]{desc} ({uses} tool uses, {dur_s}s)[/dim]")
                     try:
-                        run_query(engine, notification, print_mode=False, permissions=permissions)
+                        run_query(engine, notification, print_mode=False, permissions=permissions,
+                                  todo_manager=todo_manager)
                     except (KeyboardInterrupt, Exception):
                         return
 
@@ -628,7 +635,8 @@ def main() -> None:
         if _companion_addressed:
             continue
 
-        run_query(engine, parse_input(user_input), print_mode=False, permissions=permissions)
+        run_query(engine, parse_input(user_input), print_mode=False, permissions=permissions,
+                  todo_manager=todo_manager)
         _drain_worker_notifications()
 
         # Fire companion observer in background after each turn

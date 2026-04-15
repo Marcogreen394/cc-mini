@@ -8,6 +8,7 @@ from .file_write import FileWriteTool
 from .glob_tool import GlobTool
 from .grep_tool import GrepTool
 from .plan_tools import EnterPlanModeTool, ExitPlanModeTool
+from .todo import TodoWriteTool, TodoUpdateTool
 
 __all__ = [
     "AgentTool",
@@ -22,4 +23,6 @@ __all__ = [
     "ExitPlanModeTool",
     "SendMessageTool",
     "TaskStopTool",
+    "TodoWriteTool",
+    "TodoUpdateTool",
 ]

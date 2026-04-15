@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown as RichMarkdown
 from rich.spinner import Spinner
 from rich.text import Text
+
+if TYPE_CHECKING:
+    from features.todo import TodoItem
 
 
 # Regex for top-level block boundaries: blank line, heading, fence, hr, list
@@ -167,3 +171,29 @@ def collapsed_tool_summary(tool_names: list[str], done: bool = False) -> str:
         parts.append(plural.format(n=n) if n > 1 else singular)
     suffix = "" if done else "…"
     return " · ".join(parts) + suffix
+
+
+# ---------------------------------------------------------------------------
+# Todo list rendering
+# ---------------------------------------------------------------------------
+
+_TODO_ICONS = {
+    "pending": "[dim]◻[/dim]",
+    "in_progress": "[yellow]◼[/yellow]",
+    "completed": "[green]✓[/green]",
+}
+
+
+def render_todo_list(items: list[TodoItem], console: Console) -> None:
+    """Print a checklist-style todo list with status icons."""
+    for item in items:
+        icon = _TODO_ICONS.get(item.status, "[dim]◻[/dim]")
+        subject = item.subject
+        if len(subject) > 72:
+            subject = subject[:69] + "…"
+        if item.status == "completed":
+            console.print(f"  {icon} [dim]{subject}[/dim]", highlight=False)
+        elif item.status == "in_progress":
+            console.print(f"  {icon} [bold]{subject}[/bold]", highlight=False)
+        else:
+            console.print(f"  {icon} {subject}", highlight=False)

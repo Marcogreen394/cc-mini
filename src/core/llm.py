@@ -71,6 +71,7 @@ class LLMUsage:
 class LLMMessage:
     content: list[dict[str, Any]]
     usage: LLMUsage | None = None
+    stop_reason: str | None = None  # "end_turn", "max_tokens", "tool_use", etc.
 
 
 def validate_provider(provider: str | None) -> ProviderName:
@@ -247,6 +248,7 @@ class LLMClient:
         return LLMMessage(
             content=_normalize_anthropic_content(getattr(response, "content", [])),
             usage=usage,
+            stop_reason=getattr(response, "stop_reason", None),
         )
 
     def _openai_create_message(
@@ -269,11 +271,14 @@ class LLMClient:
             stream=False,
         )
         response = self._client.chat.completions.create(**params)
-        choice = response.choices[0].message if response.choices else None
+        choice = response.choices[0] if response.choices else None
+        finish_reason = _value(choice, "finish_reason") if choice else None
+        message = choice.message if choice else None
         usage = _usage_from_openai(getattr(response, "usage", None))
         return LLMMessage(
-            content=_normalize_openai_message(choice),
+            content=_normalize_openai_message(message),
             usage=usage,
+            stop_reason=_normalize_openai_stop_reason(finish_reason),
         )
 
 
@@ -318,6 +323,7 @@ class _AnthropicStream:
         return LLMMessage(
             content=_normalize_anthropic_content(getattr(final, "content", [])),
             usage=_usage_from_anthropic(getattr(final, "usage", None)),
+            stop_reason=getattr(final, "stop_reason", None),
         )
 
 
@@ -347,6 +353,7 @@ class _OpenAIStream:
         self._text_parts: list[str] = []
         self._tool_calls: dict[int, dict[str, Any]] = {}
         self._usage: LLMUsage | None = None
+        self._finish_reason: str | None = None
         self.text_stream: Iterator[str] = iter(())
 
     def __enter__(self):
@@ -368,6 +375,9 @@ class _OpenAIStream:
             if usage is not None:
                 self._usage = _usage_from_openai(usage)
             for choice in _value(chunk, "choices", []) or []:
+                finish_reason = _value(choice, "finish_reason")
+                if finish_reason:
+                    self._finish_reason = finish_reason
                 delta = _value(choice, "delta", {}) or {}
                 content = _value(delta, "content")
                 if content:
@@ -411,7 +421,23 @@ class _OpenAIStream:
                 "name": tool_call.get("name", ""),
                 "input": parsed_args if isinstance(parsed_args, dict) else {},
             })
-        return LLMMessage(content=content, usage=self._usage)
+        return LLMMessage(
+            content=content,
+            usage=self._usage,
+            stop_reason=_normalize_openai_stop_reason(self._finish_reason),
+        )
+
+
+def _normalize_openai_stop_reason(reason: str | None) -> str | None:
+    """Map OpenAI finish_reason to Anthropic stop_reason equivalents."""
+    if reason is None:
+        return None
+    _MAPPING = {
+        "stop": "end_turn",
+        "length": "max_tokens",
+        "tool_calls": "tool_use",
+    }
+    return _MAPPING.get(reason, reason)
 
 
 def _normalize_anthropic_content(content: Any) -> list[dict[str, Any]]:

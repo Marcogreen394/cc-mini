@@ -1,4 +1,5 @@
 from unittest.mock import MagicMock, patch
+import pytest
 from core.engine import Engine
 from core.config import default_max_tokens_for_model
 from core.tool import Tool, ToolResult
@@ -163,3 +164,136 @@ def test_engine_normalizes_tool_result_blocks_before_follow_up_request():
         "content": "Echo: world",
         "is_error": False,
     }]
+
+
+# ---------------------------------------------------------------------------
+# 401 / 402 / 429 error handling
+# ---------------------------------------------------------------------------
+
+def test_engine_handles_auth_error_401():
+    """401 authentication error stops the conversation with an error event."""
+    engine = _make_engine()
+    exc = Exception("Invalid API key")
+
+    with patch.object(engine._client, "stream_messages", side_effect=exc), \
+         patch.object(engine._client, "is_authentication_error", return_value=True):
+        events = list(engine.submit("hi"))
+
+    error_events = [e for e in events if e[0] == "error"]
+    assert any("Authentication" in e[1] for e in error_events)
+
+
+def test_engine_handles_payment_required_402():
+    """402 payment-required is a non-retryable API error."""
+    engine = _make_engine()
+    exc = Exception("Insufficient credits")
+
+    with patch.object(engine._client, "stream_messages", side_effect=exc), \
+         patch.object(engine._client, "is_authentication_error", return_value=False), \
+         patch.object(engine._client, "is_retryable_error", return_value=False), \
+         patch.object(engine._client, "is_api_error", return_value=True):
+        events = list(engine.submit("hi"))
+
+    error_events = [e for e in events if e[0] == "error"]
+    assert any("API error" in e[1] for e in error_events)
+
+
+def test_engine_handles_rate_limit_429():
+    """429 rate-limit triggers retry then succeeds."""
+    engine = _make_engine()
+    exc = Exception("Rate limited")
+    text_stream = _make_text_response("recovered")
+
+    with patch.object(engine._client, "stream_messages", side_effect=[exc, text_stream]), \
+         patch.object(engine._client, "is_authentication_error", return_value=False), \
+         patch.object(engine._client, "is_retryable_error", side_effect=lambda e: e is exc), \
+         patch.object(engine._client, "is_api_error", return_value=False), \
+         patch("core.engine.time.sleep"):
+        events = list(engine.submit("hi"))
+
+    text_events = [e for e in events if e[0] == "text"]
+    error_events = [e for e in events if e[0] == "error"]
+    assert any("recovered" in e[1] for e in text_events)
+    assert any("retrying" in e[1].lower() for e in error_events)
+
+
+# ---------------------------------------------------------------------------
+# finish_reason validation
+# ---------------------------------------------------------------------------
+
+def test_engine_warns_on_max_tokens_finish_reason():
+    """Engine emits an error event when stop_reason is max_tokens."""
+    engine = _make_engine()
+    from core.llm import LLMMessage, LLMUsage
+
+    final_msg = LLMMessage(
+        content=[{"type": "text", "text": "truncated"}],
+        usage=LLMUsage(),
+        stop_reason="max_tokens",
+    )
+    stream = MagicMock()
+    stream.__enter__ = MagicMock(return_value=stream)
+    stream.__exit__ = MagicMock(return_value=False)
+    stream.text_stream = iter(["truncated"])
+    stream.get_final_message = MagicMock(return_value=final_msg)
+
+    with patch.object(engine._client, "stream_messages", return_value=stream):
+        events = list(engine.submit("hi"))
+
+    error_events = [e for e in events if e[0] == "error"]
+    assert any("max_tokens" in e[1].lower() or "truncated" in e[1].lower()
+               for e in error_events)
+
+
+def test_engine_no_warning_on_end_turn_finish_reason():
+    """No error event when stop_reason is a normal end_turn."""
+    engine = _make_engine()
+    from core.llm import LLMMessage, LLMUsage
+
+    final_msg = LLMMessage(
+        content=[{"type": "text", "text": "done"}],
+        usage=LLMUsage(),
+        stop_reason="end_turn",
+    )
+    stream = MagicMock()
+    stream.__enter__ = MagicMock(return_value=stream)
+    stream.__exit__ = MagicMock(return_value=False)
+    stream.text_stream = iter(["done"])
+    stream.get_final_message = MagicMock(return_value=final_msg)
+
+    with patch.object(engine._client, "stream_messages", return_value=stream):
+        events = list(engine.submit("hi"))
+
+    error_events = [e for e in events if e[0] == "error"]
+    assert len(error_events) == 0
+
+
+# ---------------------------------------------------------------------------
+# Mid-stream error
+# ---------------------------------------------------------------------------
+
+def test_engine_handles_mid_stream_error():
+    """A retryable error mid-stream triggers retry and recovers."""
+    engine = _make_engine()
+
+    def failing_text_stream():
+        yield "partial"
+        raise Exception("Connection reset mid-stream")
+
+    stream_fail = MagicMock()
+    stream_fail.__enter__ = MagicMock(return_value=stream_fail)
+    stream_fail.__exit__ = MagicMock(return_value=False)
+    stream_fail.text_stream = failing_text_stream()
+
+    stream_ok = _make_text_response("success")
+
+    with patch.object(engine._client, "stream_messages", side_effect=[stream_fail, stream_ok]), \
+         patch.object(engine._client, "is_authentication_error", return_value=False), \
+         patch.object(engine._client, "is_retryable_error",
+                      side_effect=lambda e: "Connection reset" in str(e)), \
+         patch.object(engine._client, "is_api_error", return_value=False), \
+         patch("core.engine.time.sleep"):
+        events = list(engine.submit("hi"))
+
+    text_events = [e for e in events if e[0] == "text"]
+    assert any("success" in e[1] for e in text_events)

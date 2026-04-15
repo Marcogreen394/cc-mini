@@ -1,7 +1,11 @@
 """Tests for CostTracker."""
 
 import pytest
-from features.cost_tracker import CostTracker, _tier_for_model, _fmt_tokens, _fmt_duration
+from features.cost_tracker import (
+    CostTracker, _tier_for_model, _fmt_tokens, _fmt_duration,
+    REQUIRED_MODEL_FIELDS, ModelInfo, MODEL_REGISTRY,
+    validate_model_info, get_model_info,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -187,3 +191,65 @@ def test_format_cost_shows_cache():
     output = tracker.format_cost()
     assert "cache read" in output
     assert "cache write" in output
+
+
+# ---------------------------------------------------------------------------
+# Model registry & validation
+# ---------------------------------------------------------------------------
+
+def test_required_model_fields_contains_essentials():
+    assert "id" in REQUIRED_MODEL_FIELDS
+    assert "provider" in REQUIRED_MODEL_FIELDS
+    assert "pricing_tier" in REQUIRED_MODEL_FIELDS
+
+
+def test_all_registry_entries_pass_validation():
+    for model_id, info in MODEL_REGISTRY.items():
+        errors = validate_model_info(info)
+        assert errors == [], f"{model_id} has missing fields: {errors}"
+
+
+def test_validate_model_info_catches_missing_id():
+    from features.cost_tracker import _TIER_3_15
+    bad = ModelInfo(id="", provider="anthropic", pricing_tier=_TIER_3_15)
+    errors = validate_model_info(bad)
+    assert "id" in errors
+
+
+def test_registry_deprecated_models():
+    deprecated = {k: v for k, v in MODEL_REGISTRY.items() if v.deprecated}
+    assert len(deprecated) > 0
+    for model_id, info in deprecated.items():
+        assert info.deprecation_message, f"{model_id} is deprecated but has no message"
+
+
+def test_registry_hugging_face_ids():
+    hf_models = {k: v for k, v in MODEL_REGISTRY.items() if v.hugging_face_id}
+    assert len(hf_models) > 0
+    for model_id, info in hf_models.items():
+        assert info.hugging_face_id.startswith("anthropic/")
+
+
+def test_get_model_info_exact():
+    info = get_model_info("claude-opus-4-6")
+    assert info is not None
+    assert info.id == "claude-opus-4-6"
+    assert info.hugging_face_id == "anthropic/claude-opus-4-6"
+
+
+def test_get_model_info_with_date_suffix():
+    info = get_model_info("claude-sonnet-4-6-20250514")
+    assert info is not None
+    assert info.id == "claude-sonnet-4-6"
+
+
+def test_get_model_info_unknown():
+    info = get_model_info("gpt-5.1-codex")
+    assert info is None
+
+
+def test_get_model_info_deprecated_flag():
+    info = get_model_info("claude-3-5-sonnet-20241022")
+    assert info is not None
+    assert info.deprecated is True
+    assert "claude-sonnet-4-6" in info.deprecation_message

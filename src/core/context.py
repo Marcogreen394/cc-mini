@@ -85,6 +85,7 @@ def _get_using_tools_section() -> str:
     tool_prefs_str = "\n".join(f"  - {item}" for item in tool_prefs)
     items = [
         f"Do NOT use the Bash to run commands when a relevant dedicated tool is provided. Using dedicated tools allows the user to better understand and review your work. This is CRITICAL to assisting the user:\n{tool_prefs_str}",
+        "Break down and manage your work with the TodoWrite and TodoUpdate tools. Use TodoWrite to create a checklist when starting multi-step work (3+ steps). Mark each item as in_progress when you begin it and completed when done. The user sees a live checklist — keep it current.",
         "You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. Maximize use of parallel tool calls where possible to increase efficiency. However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially. For instance, if one operation must complete before another starts, run these operations sequentially instead.",
     ]
     return "# Using your tools\n" + "\n".join(f" - {item}" for item in items)
